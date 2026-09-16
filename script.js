@@ -30,11 +30,13 @@
         durations: {
           pomodoro: 25 * 60,
           shortBreak: 5 * 60,
-          longBreak: 15 * 60
+          longBreak: 15 * 60,
+          custom: 25 * 60
         },
         timeRemaining: 25 * 60,
         stopwatchSeconds: 0,
         isRunning: false,
+        lastTickTimestamp: null,
         activeSubjectId: null,
         soundEnabled: true,
         completedCyclesToday: 0,
@@ -338,13 +340,22 @@ Pick a quick prompt above or ask any question!`
   }
 
   // ==========================================================================
-  // 7. POMODORO & STOPWATCH TIMER ENGINE
+  // 7. POMODORO, STOPWATCH & CUSTOM TIMER ENGINE
   // ==========================================================================
+  // Reference to the active timer interval ID (null when timer is paused/stopped)
   let timerInterval = null;
 
+  /**
+   * Formats seconds into MM:SS (or HH:MM:SS if duration is 1 hour or more).
+   */
   function formatTime(seconds) {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
+    const totalSec = Math.max(0, Math.floor(seconds));
+    const hours = Math.floor(totalSec / 3600);
+    const mins = Math.floor((totalSec % 3600) / 60);
+    const secs = totalSec % 60;
+    if (hours > 0) {
+      return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   }
 
@@ -355,6 +366,9 @@ Pick a quick prompt above or ask any question!`
     return `${h}h ${m}m`;
   }
 
+  /**
+   * Initializes timer buttons, listeners, dropdowns, and handles state recovery.
+   */
   function setupTimerEngine() {
     const miniToggle = document.getElementById('miniTimerToggle');
     const dashPlayBtn = document.getElementById('dashTimerPlayBtn');
@@ -398,7 +412,7 @@ Pick a quick prompt above or ask any question!`
       });
     }
 
-    // Mode switching
+    // Mode switching tabs
     modeTabs.forEach(tab => {
       tab.addEventListener('click', () => {
         const mode = tab.getAttribute('data-mode');
@@ -406,7 +420,7 @@ Pick a quick prompt above or ask any question!`
       });
     });
 
-    // Control triggers
+    // Control triggers (toggle Play / Pause)
     const togglePlay = () => {
       if (state.timer.isRunning) {
         pauseTimer();
@@ -423,7 +437,73 @@ Pick a quick prompt above or ask any question!`
     if (mainResetBtn) mainResetBtn.addEventListener('click', resetTimer);
     if (mainSkipBtn) mainSkipBtn.addEventListener('click', skipTimer);
 
+    // Sync active mode tab button with state
+    modeTabs.forEach(btn => {
+      if (btn.getAttribute('data-mode') === state.timer.mode) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    });
+
+    // Recover timer state if it was active before page reload
+    recoverTimerStateOnLoad();
+
     updateTimerDisplay();
+  }
+
+  /**
+   * Recovers timer state across page reloads.
+   * If the timer was running before reload, calculates the exact elapsed time
+   * using Date.now() - saved timestamp and applies it without losing time.
+   */
+  function recoverTimerStateOnLoad() {
+    if (state.timer.isRunning && state.timer.lastTickTimestamp) {
+      const now = Date.now();
+      const elapsedMs = now - state.timer.lastTickTimestamp;
+      const elapsedSec = Math.floor(elapsedMs / 1000);
+
+      if (elapsedSec > 0) {
+        if (state.timer.mode === 'stopwatch') {
+          // Cap elapsed time to 12 hours to prevent runaway numbers if tab was closed for days
+          const cappedSec = Math.min(elapsedSec, 12 * 3600);
+          state.timer.stopwatchSeconds += cappedSec;
+          logStudyTime(cappedSec);
+          state.timer.lastTickTimestamp = now;
+          startTimer(true);
+        } else {
+          // Countdown mode
+          if (elapsedSec >= state.timer.timeRemaining) {
+            // Timer completed while away
+            const studySec = state.timer.timeRemaining;
+            state.timer.timeRemaining = 0;
+            state.timer.lastTickTimestamp = null;
+            if (state.timer.mode === 'pomodoro' || state.timer.mode === 'custom') {
+              logStudyTime(studySec);
+            }
+            saveState();
+            handleTimerComplete();
+          } else {
+            // Still active with remaining time
+            state.timer.timeRemaining -= elapsedSec;
+            if (state.timer.mode === 'pomodoro' || state.timer.mode === 'custom') {
+              logStudyTime(elapsedSec);
+            }
+            state.timer.lastTickTimestamp = now;
+            saveState();
+            startTimer(true);
+          }
+        }
+      } else {
+        // Less than 1 second elapsed (instant refresh)
+        startTimer(true);
+      }
+    } else {
+      // Timer was not running: ensure clean paused state
+      state.timer.isRunning = false;
+      state.timer.lastTickTimestamp = null;
+      updatePlayPauseIcons(false);
+    }
   }
 
   function populateTimerSubjects() {
@@ -442,6 +522,9 @@ Pick a quick prompt above or ask any question!`
     });
   }
 
+  /**
+   * Switch timer mode between 'pomodoro', 'shortBreak', 'longBreak', 'stopwatch', or 'custom'.
+   */
   function switchTimerMode(mode) {
     pauseTimer();
     state.timer.mode = mode;
@@ -460,30 +543,87 @@ Pick a quick prompt above or ask any question!`
       state.timer.timeRemaining = state.timer.durations[mode] || (25 * 60);
     }
 
+    state.timer.lastTickTimestamp = null;
     saveState();
     updateTimerDisplay();
   }
 
-  function startTimer() {
-    if (state.timer.isRunning) return;
+  /**
+   * Start or resume the timer.
+   * Uses real Date.now() timestamp tracking to guarantee accuracy across browser throttling.
+   * Prevents multiple duplicate setInterval loops.
+   */
+  function startTimer(isRecovery = false) {
+    // Prevent duplicate intervals if timer is already running
+    if (state.timer.isRunning && timerInterval !== null) return;
+
+    // Clear any existing stale interval
+    if (timerInterval !== null) {
+      clearInterval(timerInterval);
+      timerInterval = null;
+    }
+
     state.timer.isRunning = true;
+    // Set timestamp baseline for accurate elapsed time calculation
+    state.timer.lastTickTimestamp = Date.now();
 
     // Start tone for pleasant feedback
     getAudioContext();
 
-    timerInterval = setInterval(timerTick, 1000);
+    // Tick every 500ms for responsive UI updates while computing whole seconds from timestamps
+    timerInterval = setInterval(timerTick, 500);
+
+    saveState();
     updatePlayPauseIcons(true);
-    showToast(`Timer started (${state.timer.mode.toUpperCase()}) 🎯`, 'info');
+    updateTimerDisplay();
+
+    if (!isRecovery) {
+      showToast(`Timer started (${state.timer.mode.toUpperCase()}) 🎯`, 'info');
+    }
   }
 
+  /**
+   * Pause the timer accurately without losing elapsed seconds.
+   * Cleans up interval and saves remaining/elapsed time to localStorage.
+   */
   function pauseTimer() {
-    if (!state.timer.isRunning) return;
+    if (!state.timer.isRunning && timerInterval === null) return;
+
+    // Account for any unlogged elapsed seconds right up to pause click
+    if (state.timer.lastTickTimestamp) {
+      const now = Date.now();
+      const elapsedSec = Math.floor((now - state.timer.lastTickTimestamp) / 1000);
+      if (elapsedSec > 0) {
+        if (state.timer.mode === 'stopwatch') {
+          state.timer.stopwatchSeconds += elapsedSec;
+          logStudyTime(elapsedSec);
+        } else {
+          const deduct = Math.min(state.timer.timeRemaining, elapsedSec);
+          state.timer.timeRemaining -= deduct;
+          if (state.timer.mode === 'pomodoro' || state.timer.mode === 'custom') {
+            logStudyTime(deduct);
+          }
+        }
+      }
+    }
+
     state.timer.isRunning = false;
-    clearInterval(timerInterval);
-    timerInterval = null;
+    state.timer.lastTickTimestamp = null;
+
+    if (timerInterval !== null) {
+      clearInterval(timerInterval);
+      timerInterval = null;
+    }
+
+    saveState();
     updatePlayPauseIcons(false);
+    updateTimerDisplay();
   }
 
+  /**
+   * Reset timer to selected mode duration (or 0 for stopwatch).
+   * Does not count paused or reset time as study time.
+   */
   function resetTimer() {
     pauseTimer();
     if (state.timer.mode === 'stopwatch') {
@@ -491,14 +631,18 @@ Pick a quick prompt above or ask any question!`
     } else {
       state.timer.timeRemaining = state.timer.durations[state.timer.mode] || (25 * 60);
     }
+    state.timer.lastTickTimestamp = null;
     saveState();
     updateTimerDisplay();
     showToast('Timer reset to start.', 'info');
   }
 
+  /**
+   * Skip to the next session interval.
+   */
   function skipTimer() {
     pauseTimer();
-    if (state.timer.mode === 'pomodoro') {
+    if (state.timer.mode === 'pomodoro' || state.timer.mode === 'custom') {
       switchTimerMode('shortBreak');
     } else {
       switchTimerMode('pomodoro');
@@ -506,32 +650,104 @@ Pick a quick prompt above or ask any question!`
     showToast('Skipped to next session interval.', 'info');
   }
 
+  /**
+   * Manual timer function: allows setting custom hours, minutes, and seconds.
+   * Can be invoked programmatically or connected to custom UI inputs later.
+   * @param {number} hours
+   * @param {number} minutes
+   * @param {number} seconds
+   * @returns {boolean} True if successfully set
+   */
+  function setCustomTimer(hours = 0, minutes = 0, seconds = 0) {
+    const h = parseInt(hours, 10) || 0;
+    const m = parseInt(minutes, 10) || 0;
+    const s = parseInt(seconds, 10) || 0;
+    const totalSec = h * 3600 + m * 60 + s;
+
+    if (totalSec <= 0) {
+      showToast('Please enter a duration greater than 0 seconds.', 'warning');
+      return false;
+    }
+
+    pauseTimer();
+    state.timer.mode = 'custom';
+    if (!state.timer.durations) state.timer.durations = {};
+    state.timer.durations.custom = totalSec;
+    state.timer.timeRemaining = totalSec;
+    state.timer.lastTickTimestamp = null;
+
+    // Deselect standard mode tab buttons
+    document.querySelectorAll('.timer-mode-btn').forEach(btn => {
+      btn.classList.remove('active');
+    });
+
+    saveState();
+    updateTimerDisplay();
+    showToast(`Custom countdown set to ${formatHoursMinutes(totalSec)}.`, 'info');
+    return true;
+  }
+
+  /**
+   * Returns a copy of current timer state for external or future UI inspection.
+   */
+  function getTimerState() {
+    return { ...state.timer };
+  }
+
+  /**
+   * Timestamp-based timer tick.
+   * Calculates actual elapsed seconds using Date.now() - lastTickTimestamp.
+   * Ensures accurate countdown/countup even if setInterval was delayed or tab was backgrounded.
+   */
   function timerTick() {
+    if (!state.timer.isRunning || !state.timer.lastTickTimestamp) {
+      pauseTimer();
+      return;
+    }
+
+    const now = Date.now();
+    const elapsedMs = now - state.timer.lastTickTimestamp;
+    const elapsedSec = Math.floor(elapsedMs / 1000);
+
+    // Only process whole seconds elapsed
+    if (elapsedSec <= 0) return;
+
+    // Advance baseline by whole seconds consumed
+    state.timer.lastTickTimestamp += elapsedSec * 1000;
+
+    // Stopwatch mode
     if (state.timer.mode === 'stopwatch') {
-      state.timer.stopwatchSeconds += 1;
-      // Increment study seconds every minute
-      if (state.timer.stopwatchSeconds % 60 === 0) {
-        logStudyTime(60);
-      }
+      state.timer.stopwatchSeconds += elapsedSec;
+      logStudyTime(elapsedSec);
       updateTimerDisplay();
       return;
     }
 
-    // Pomodoro / Breaks countdown
-    if (state.timer.timeRemaining > 0) {
-      state.timer.timeRemaining -= 1;
-      // Credit study time only during active pomodoro work
-      if (state.timer.mode === 'pomodoro') {
-        logStudyTime(1);
+    // Countdown modes (pomodoro, shortBreak, longBreak, custom)
+    if (state.timer.timeRemaining > elapsedSec) {
+      state.timer.timeRemaining -= elapsedSec;
+      // Only count study time during active focus blocks (pomodoro or custom)
+      if (state.timer.mode === 'pomodoro' || state.timer.mode === 'custom') {
+        logStudyTime(elapsedSec);
       }
       updateTimerDisplay();
     } else {
-      // Session finished!
+      // Countdown completed!
+      const remainingSeconds = state.timer.timeRemaining;
+      state.timer.timeRemaining = 0;
+      if (state.timer.mode === 'pomodoro' || state.timer.mode === 'custom') {
+        logStudyTime(remainingSeconds);
+      }
+      updateTimerDisplay();
       handleTimerComplete();
     }
   }
 
+  /**
+   * Credits elapsed focus seconds to today's total study time and the selected subject.
+   */
   function logStudyTime(seconds) {
+    if (seconds <= 0) return;
     state.timer.todayStudySeconds += seconds;
     
     // Credit to active subject
@@ -545,20 +761,27 @@ Pick a quick prompt above or ask any question!`
     saveState();
   }
 
+  /**
+   * Triggered when a countdown study block finishes.
+   * Records completed session to recentSessions, increments cycles, and switches modes.
+   */
   function handleTimerComplete() {
     pauseTimer();
     playToneChime();
 
-    if (state.timer.mode === 'pomodoro') {
+    if (state.timer.mode === 'pomodoro' || state.timer.mode === 'custom') {
       state.timer.completedCyclesToday += 1;
 
       // Add to recent sessions list
       const sub = state.subjects.find(s => s.id === state.timer.activeSubjectId);
       const sessionName = sub ? sub.name : 'General Study';
+      const durationSeconds = state.timer.durations[state.timer.mode] || (25 * 60);
+      const durationMin = Math.max(1, Math.round(durationSeconds / 60));
+
       state.timer.recentSessions.unshift({
         subjectId: state.timer.activeSubjectId,
         subjectName: sessionName,
-        durationMin: 25,
+        durationMin: durationMin,
         date: getIsoDate(0),
         timeStr: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       });
@@ -626,7 +849,11 @@ Pick a quick prompt above or ask any question!`
     const dashModeBadge = document.getElementById('dashTimerModeBadge');
     if (dashDisplay) dashDisplay.textContent = timeString;
     if (dashModeBadge) {
-      dashModeBadge.textContent = state.timer.mode.toUpperCase() + (state.timer.mode === 'pomodoro' ? ' • Focus' : ' • Break');
+      if (state.timer.mode === 'custom') {
+        dashModeBadge.textContent = 'CUSTOM • Focus';
+      } else {
+        dashModeBadge.textContent = state.timer.mode.toUpperCase() + (state.timer.mode === 'pomodoro' ? ' • Focus' : ' • Break');
+      }
     }
 
     // Update Timer view giant dial
@@ -648,7 +875,7 @@ Pick a quick prompt above or ask any question!`
       if (!state.timer.isRunning) {
         statusLabel.textContent = 'Ready to Focus';
       } else {
-        statusLabel.textContent = state.timer.mode === 'pomodoro' ? 'Focusing...' : 'Recharging...';
+        statusLabel.textContent = (state.timer.mode === 'pomodoro' || state.timer.mode === 'custom') ? 'Focusing...' : 'Recharging...';
       }
     }
 
@@ -659,12 +886,77 @@ Pick a quick prompt above or ask any question!`
       if (state.timer.mode === 'stopwatch') {
         progress = (currentSeconds % 3600) / 3600;
       } else {
-        progress = (totalTarget - currentSeconds) / totalTarget;
+        progress = totalTarget > 0 ? (totalTarget - currentSeconds) / totalTarget : 0;
       }
       const offset = circumference - (progress * circumference);
       progressRing.style.strokeDashoffset = offset;
     }
   }
+
+  /**
+   * Renders the complete Timer View components:
+   * displays, completed cycles dots, and recent sessions log list.
+   */
+  function renderTimerView() {
+    updateTimerDisplay();
+
+    // 1. Completed cycles dots (groups of 4 Pomodoros)
+    const cyclesContainer = document.getElementById('cyclesDotsContainer');
+    if (cyclesContainer) {
+      cyclesContainer.innerHTML = '';
+      const completedInCycle = state.timer.completedCyclesToday % 4;
+      const filledCount = (state.timer.completedCyclesToday > 0 && completedInCycle === 0) ? 4 : completedInCycle;
+      for (let i = 0; i < 4; i++) {
+        const dot = document.createElement('span');
+        dot.className = `cycle-dot ${i < filledCount ? 'filled' : ''}`;
+        cyclesContainer.appendChild(dot);
+      }
+    }
+
+    // 2. Recent study sessions list
+    const sessionsList = document.getElementById('timerSessionsList');
+    const totalSessionsBadge = document.getElementById('timerTotalSessionsCount');
+
+    if (totalSessionsBadge) {
+      totalSessionsBadge.textContent = `${state.timer.recentSessions.length} logged`;
+    }
+
+    if (sessionsList) {
+      sessionsList.innerHTML = '';
+      if (state.timer.recentSessions.length === 0) {
+        sessionsList.innerHTML = `<div style="text-align: center; padding: 24px; color: var(--text-muted); font-size: 0.9rem;">No study sessions recorded yet. Finish a Pomodoro session to log your first block! 🎯</div>`;
+      } else {
+        state.timer.recentSessions.forEach(session => {
+          const sub = state.subjects.find(s => s.id === session.subjectId);
+          const color = sub ? sub.color : '#6366f1';
+          const item = document.createElement('div');
+          item.className = 'timer-session-item';
+          item.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="session-subject-dot" style="background: ${color}"></span>
+              <div>
+                <strong style="font-size: 0.92rem;">${session.subjectName || 'General Study'}</strong>
+                <div style="font-size: 0.78rem; color: var(--text-muted);">${session.date || ''} • ${session.timeStr || ''}</div>
+              </div>
+            </div>
+            <span class="badge" style="background: ${color}20; color: ${color}; font-weight: 600;">+${session.durationMin}m</span>
+          `;
+          sessionsList.appendChild(item);
+        });
+      }
+    }
+  }
+
+  // Expose manual timer and control functions globally for future UI binding or console usage
+  window.StudyBuddyTimer = {
+    setCustomTimer,
+    startTimer,
+    pauseTimer,
+    resetTimer,
+    switchTimerMode,
+    getTimerState
+  };
+  window.setCustomTimer = setCustomTimer;
 
   // ==========================================================================
   // 8. SUBJECT MANAGEMENT (VIEW & MODAL)
@@ -2317,6 +2609,8 @@ Would you like me to:
           state.timer.todayStudySeconds = 0;
           state.timer.completedCyclesToday = 0;
           state.timer.recentSessions = [];
+          state.timer.isRunning = false;
+          state.timer.lastTickTimestamp = null;
           saveState();
           window.location.reload();
         }
@@ -2391,6 +2685,7 @@ Would you like me to:
     renderAnalytics();
     renderReminders();
     renderAiChat();
+    renderTimerView();
 
     console.log('Study Buddy college productivity application initialized successfully.');
   }
