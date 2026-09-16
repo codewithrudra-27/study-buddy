@@ -599,6 +599,34 @@
                 <button class="timer-mode-btn" data-mode="shortBreak" role="tab">Short Break (5m)</button>
                 <button class="timer-mode-btn" data-mode="longBreak" role="tab">Long Break (15m)</button>
                 <button class="timer-mode-btn" data-mode="stopwatch" role="tab">Stopwatch ⏱️</button>
+                <button class="timer-mode-btn" data-mode="custom" role="tab" id="manualTimerTabBtn">Manual Timer ⏳</button>
+              </div>
+
+              <!-- Manual Timer Setup Panel -->
+              <div class="manual-timer-panel" id="manualTimerPanel" style="display: none; margin-bottom: 24px; background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: 16px 20px; text-align: center;">
+                <div style="font-weight: 600; font-size: 0.95rem; margin-bottom: 12px; color: var(--text-primary); display: flex; align-items: center; justify-content: center; gap: 8px;">
+                  <span>⏳ Set Manual Countdown</span>
+                </div>
+                <div style="display: flex; gap: 12px; align-items: flex-end; justify-content: center; flex-wrap: wrap;">
+                  <div style="display: flex; flex-direction: column; gap: 4px; text-align: left;">
+                    <label for="manualTimerHours" style="font-size: 0.78rem; font-weight: 600; color: var(--text-secondary);">Hours</label>
+                    <input type="number" id="manualTimerHours" class="form-input" min="0" max="99" value="0" style="width: 75px; text-align: center; font-weight: 700;">
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 4px; text-align: left;">
+                    <label for="manualTimerMinutes" style="font-size: 0.78rem; font-weight: 600; color: var(--text-secondary);">Minutes</label>
+                    <input type="number" id="manualTimerMinutes" class="form-input" min="0" max="59" value="25" style="width: 75px; text-align: center; font-weight: 700;">
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 4px; text-align: left;">
+                    <label for="manualTimerSeconds" style="font-size: 0.78rem; font-weight: 600; color: var(--text-secondary);">Seconds</label>
+                    <input type="number" id="manualTimerSeconds" class="form-input" min="0" max="59" value="0" style="width: 75px; text-align: center; font-weight: 700;">
+                  </div>
+                  <button type="button" class="btn btn-primary" id="startManualTimerBtn" style="height: 42px; display: inline-flex; align-items: center; gap: 6px;">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                      <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                    </svg>
+                    Start Manual Timer
+                  </button>
+                </div>
               </div>
 
               <!-- Big Circular Dial -->

@@ -346,14 +346,14 @@ Pick a quick prompt above or ask any question!`
   let timerInterval = null;
 
   /**
-   * Formats seconds into MM:SS (or HH:MM:SS if duration is 1 hour or more).
+   * Formats seconds into MM:SS, or HH:MM:SS when duration is 1 hour or more, or mode is manual timer.
    */
   function formatTime(seconds) {
     const totalSec = Math.max(0, Math.floor(seconds));
     const hours = Math.floor(totalSec / 3600);
     const mins = Math.floor((totalSec % 3600) / 60);
     const secs = totalSec % 60;
-    if (hours > 0) {
+    if (hours > 0 || state.timer.mode === 'custom') {
       return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
     }
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
@@ -380,6 +380,13 @@ Pick a quick prompt above or ask any question!`
     const soundToggle = document.getElementById('timerSoundToggle');
     const subjectSelect = document.getElementById('timerSubjectSelect');
     const dashSubjectSelect = document.getElementById('dashTimerSubjectSelect');
+
+    // Setup Manual Timer inputs and button
+    const manualPanel = document.getElementById('manualTimerPanel');
+    const startManualBtn = document.getElementById('startManualTimerBtn');
+    const inputH = document.getElementById('manualTimerHours');
+    const inputM = document.getElementById('manualTimerMinutes');
+    const inputS = document.getElementById('manualTimerSeconds');
 
     // Populate Subject Selects
     populateTimerSubjects();
@@ -436,6 +443,62 @@ Pick a quick prompt above or ask any question!`
     if (dashResetBtn) dashResetBtn.addEventListener('click', resetTimer);
     if (mainResetBtn) mainResetBtn.addEventListener('click', resetTimer);
     if (mainSkipBtn) mainSkipBtn.addEventListener('click', skipTimer);
+
+    // Restore saved custom timer input values
+    if (inputH && state.timer.customInputHours !== undefined) inputH.value = state.timer.customInputHours;
+    if (inputM && state.timer.customInputMinutes !== undefined) inputM.value = state.timer.customInputMinutes;
+    if (inputS && state.timer.customInputSeconds !== undefined) inputS.value = state.timer.customInputSeconds;
+
+    // Toggle manual timer setup panel visibility
+    if (manualPanel) {
+      manualPanel.style.display = state.timer.mode === 'custom' ? 'block' : 'none';
+    }
+
+    // Start Manual Timer Button handler
+    if (startManualBtn) {
+      startManualBtn.addEventListener('click', () => {
+        const h = parseInt(document.getElementById('manualTimerHours')?.value, 10) || 0;
+        const m = parseInt(document.getElementById('manualTimerMinutes')?.value, 10) || 0;
+        const s = parseInt(document.getElementById('manualTimerSeconds')?.value, 10) || 0;
+        const totalSec = h * 3600 + m * 60 + s;
+
+        if (totalSec <= 0) {
+          showToast('Please enter a duration greater than 0 seconds.', 'warning');
+          return;
+        }
+
+        // If timer is already running in custom mode, prevent duplicate start
+        if (state.timer.isRunning && state.timer.mode === 'custom' && state.timer.timeRemaining > 0) {
+          showToast('Manual timer is already running! ⏳', 'info');
+          return;
+        }
+
+        setCustomTimer(h, m, s);
+        startTimer();
+      });
+    }
+
+    // Dynamic input sync when typing custom timer values while paused/stopped
+    const onManualInputChange = () => {
+      if (state.timer.mode === 'custom' && !state.timer.isRunning) {
+        const h = parseInt(document.getElementById('manualTimerHours')?.value, 10) || 0;
+        const m = parseInt(document.getElementById('manualTimerMinutes')?.value, 10) || 0;
+        const s = parseInt(document.getElementById('manualTimerSeconds')?.value, 10) || 0;
+        const totalSec = h * 3600 + m * 60 + s;
+        if (totalSec > 0) {
+          state.timer.durations.custom = totalSec;
+          state.timer.timeRemaining = totalSec;
+          state.timer.customInputHours = h;
+          state.timer.customInputMinutes = m;
+          state.timer.customInputSeconds = s;
+          saveState();
+          updateTimerDisplay();
+        }
+      }
+    };
+    if (inputH) inputH.addEventListener('input', onManualInputChange);
+    if (inputM) inputM.addEventListener('input', onManualInputChange);
+    if (inputS) inputS.addEventListener('input', onManualInputChange);
 
     // Sync active mode tab button with state
     modeTabs.forEach(btn => {
@@ -537,8 +600,21 @@ Pick a quick prompt above or ask any question!`
       }
     });
 
+    // Toggle Manual Timer setup panel visibility
+    const manualPanel = document.getElementById('manualTimerPanel');
+    if (manualPanel) {
+      manualPanel.style.display = mode === 'custom' ? 'block' : 'none';
+    }
+
     if (mode === 'stopwatch') {
       state.timer.stopwatchSeconds = 0;
+    } else if (mode === 'custom') {
+      const h = parseInt(document.getElementById('manualTimerHours')?.value, 10) || 0;
+      const m = parseInt(document.getElementById('manualTimerMinutes')?.value, 10) || 25;
+      const s = parseInt(document.getElementById('manualTimerSeconds')?.value, 10) || 0;
+      const total = h * 3600 + m * 60 + s;
+      state.timer.durations.custom = total > 0 ? total : (state.timer.durations.custom || (25 * 60));
+      state.timer.timeRemaining = state.timer.durations.custom;
     } else {
       state.timer.timeRemaining = state.timer.durations[mode] || (25 * 60);
     }
@@ -578,7 +654,8 @@ Pick a quick prompt above or ask any question!`
     updateTimerDisplay();
 
     if (!isRecovery) {
-      showToast(`Timer started (${state.timer.mode.toUpperCase()}) 🎯`, 'info');
+      const modeLabel = state.timer.mode === 'custom' ? 'MANUAL' : state.timer.mode.toUpperCase();
+      showToast(`Timer started (${modeLabel}) 🎯`, 'info');
     }
   }
 
@@ -659,9 +736,9 @@ Pick a quick prompt above or ask any question!`
    * @returns {boolean} True if successfully set
    */
   function setCustomTimer(hours = 0, minutes = 0, seconds = 0) {
-    const h = parseInt(hours, 10) || 0;
-    const m = parseInt(minutes, 10) || 0;
-    const s = parseInt(seconds, 10) || 0;
+    const h = Math.max(0, parseInt(hours, 10) || 0);
+    const m = Math.max(0, parseInt(minutes, 10) || 0);
+    const s = Math.max(0, parseInt(seconds, 10) || 0);
     const totalSec = h * 3600 + m * 60 + s;
 
     if (totalSec <= 0) {
@@ -675,15 +752,33 @@ Pick a quick prompt above or ask any question!`
     state.timer.durations.custom = totalSec;
     state.timer.timeRemaining = totalSec;
     state.timer.lastTickTimestamp = null;
+    state.timer.customInputHours = h;
+    state.timer.customInputMinutes = m;
+    state.timer.customInputSeconds = s;
 
-    // Deselect standard mode tab buttons
+    // Sync input fields in UI if they exist
+    const inputH = document.getElementById('manualTimerHours');
+    const inputM = document.getElementById('manualTimerMinutes');
+    const inputS = document.getElementById('manualTimerSeconds');
+    if (inputH) inputH.value = h;
+    if (inputM) inputM.value = m;
+    if (inputS) inputS.value = s;
+
+    // Sync mode tab buttons
     document.querySelectorAll('.timer-mode-btn').forEach(btn => {
-      btn.classList.remove('active');
+      if (btn.getAttribute('data-mode') === 'custom') {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
     });
+
+    const manualPanel = document.getElementById('manualTimerPanel');
+    if (manualPanel) manualPanel.style.display = 'block';
 
     saveState();
     updateTimerDisplay();
-    showToast(`Custom countdown set to ${formatHoursMinutes(totalSec)}.`, 'info');
+    showToast(`Manual countdown set to ${formatTime(totalSec)}.`, 'info');
     return true;
   }
 
@@ -789,8 +884,11 @@ Pick a quick prompt above or ask any question!`
 
       showToast('🎉 Focus session complete! Fantastic job! Take a well-deserved break.', 'success');
 
-      // Next is Short Break or Long Break (every 4 cycles)
-      if (state.timer.completedCyclesToday % 4 === 0) {
+      // Next session setup
+      if (state.timer.mode === 'custom') {
+        // Reset manual timer countdown back to configured custom duration so user can repeat or adjust
+        state.timer.timeRemaining = state.timer.durations.custom || (25 * 60);
+      } else if (state.timer.completedCyclesToday % 4 === 0) {
         switchTimerMode('longBreak');
       } else {
         switchTimerMode('shortBreak');
@@ -820,7 +918,13 @@ Pick a quick prompt above or ask any question!`
       playIcons.forEach(i => i.classList.remove('hidden'));
       pauseIcons.forEach(i => i.classList.add('hidden'));
       if (miniDot) miniDot.classList.remove('active');
-      if (mainBtnText) mainBtnText.textContent = 'Start Focus';
+      if (mainBtnText) {
+        const totalTarget = state.timer.durations[state.timer.mode] || (25 * 60);
+        const isPartiallyElapsed = state.timer.mode === 'stopwatch' 
+          ? state.timer.stopwatchSeconds > 0 
+          : (state.timer.timeRemaining < totalTarget && state.timer.timeRemaining > 0);
+        mainBtnText.textContent = isPartiallyElapsed ? 'Resume Focus' : 'Start Focus';
+      }
     }
   }
 
@@ -850,7 +954,7 @@ Pick a quick prompt above or ask any question!`
     if (dashDisplay) dashDisplay.textContent = timeString;
     if (dashModeBadge) {
       if (state.timer.mode === 'custom') {
-        dashModeBadge.textContent = 'CUSTOM • Focus';
+        dashModeBadge.textContent = 'MANUAL • Focus';
       } else {
         dashModeBadge.textContent = state.timer.mode.toUpperCase() + (state.timer.mode === 'pomodoro' ? ' • Focus' : ' • Break');
       }
@@ -873,7 +977,7 @@ Pick a quick prompt above or ask any question!`
 
     if (statusLabel) {
       if (!state.timer.isRunning) {
-        statusLabel.textContent = 'Ready to Focus';
+        statusLabel.textContent = state.timer.mode === 'custom' ? 'Ready to Focus (Manual)' : 'Ready to Focus';
       } else {
         statusLabel.textContent = (state.timer.mode === 'pomodoro' || state.timer.mode === 'custom') ? 'Focusing...' : 'Recharging...';
       }
@@ -2000,8 +2104,10 @@ Pick a quick prompt above or ask any question!`
   }
 
   // ==========================================================================
-  // 14. BUILT-IN AI STUDY ASSISTANT (FRONTEND & SIMULATED REPLIES)
+  // 14. BUILT-IN AI STUDY ASSISTANT (COLLEGE ACADEMIC TUTOR & COPILOT)
   // ==========================================================================
+  let isAiResponding = false;
+
   function setupAiAssistant() {
     const input = document.getElementById('aiChatInput');
     const sendBtn = document.getElementById('aiSendBtn');
@@ -2010,9 +2116,10 @@ Pick a quick prompt above or ask any question!`
 
     chipBtns.forEach(btn => {
       btn.addEventListener('click', () => {
+        if (isAiResponding) return;
         const text = btn.getAttribute('data-ai-text') || btn.getAttribute('data-ai-prompt');
         if (text) {
-          // Switch to assistant view if clicked from dashboard
+          // Switch to assistant view if clicked from dashboard or sidebar
           const assistantNav = document.querySelector('[data-view="assistant"]');
           if (assistantNav && !document.getElementById('view-assistant').classList.contains('active')) {
             assistantNav.click();
@@ -2024,15 +2131,19 @@ Pick a quick prompt above or ask any question!`
 
     if (sendBtn && input) {
       sendBtn.addEventListener('click', () => {
-        sendUserMessage(input.value);
+        if (isAiResponding) return;
+        const val = input.value;
         input.value = '';
+        sendUserMessage(val);
       });
 
       input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
-          sendUserMessage(input.value);
+          if (isAiResponding) return;
+          const val = input.value;
           input.value = '';
+          sendUserMessage(val);
         }
       });
     }
@@ -2048,8 +2159,17 @@ Pick a quick prompt above or ask any question!`
   }
 
   function sendUserMessage(text) {
+    if (isAiResponding) return;
     if (!text || !text.trim()) return;
     const cleanText = text.trim();
+
+    isAiResponding = true;
+    const sendBtn = document.getElementById('aiSendBtn');
+    const input = document.getElementById('aiChatInput');
+    if (sendBtn) {
+      sendBtn.disabled = true;
+      sendBtn.style.opacity = '0.5';
+    }
 
     // Push User message
     state.chatHistory.push({
@@ -2068,195 +2188,1342 @@ Pick a quick prompt above or ask any question!`
     typingIndicator.innerHTML = `
       <div class="ai-avatar">🤖</div>
       <div class="ai-bubble">
-        <div class="ai-bubble-content"><em>Thinking and analyzing your study query...</em></div>
+        <div class="ai-bubble-content"><em>Analyzing query and synthesizing answer...</em></div>
       </div>`;
     if (scrollContainer) {
       scrollContainer.appendChild(typingIndicator);
       scrollContainer.scrollTop = scrollContainer.scrollHeight;
     }
 
-    // If user has provided a custom Gemini API key in settings, attempt live call
-    if (state.settings.geminiApiKey) {
-      fetchLiveGeminiResponse(cleanText, typingIndicator);
-    } else {
-      // Simulate realistic intelligent response after 700ms
-      setTimeout(() => {
-        if (typingIndicator) typingIndicator.remove();
-        const reply = generateCollegeAiResponse(cleanText);
+    const finishAiResponse = (replyText) => {
+      try {
+        if (typingIndicator && typingIndicator.parentNode) {
+          typingIndicator.remove();
+        }
         state.chatHistory.push({
           role: 'assistant',
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          text: reply
+          text: replyText
         });
         saveState();
         renderAiChat();
         playToneChime();
-      }, 700);
+      } catch (err) {
+        console.error('Error rendering AI response:', err);
+      } finally {
+        isAiResponding = false;
+        if (sendBtn) {
+          sendBtn.disabled = false;
+          sendBtn.style.opacity = '1';
+        }
+        if (input) input.focus();
+      }
+    };
+
+    // If user has provided a custom Gemini API key in settings, attempt live call
+    if (state.settings && state.settings.geminiApiKey) {
+      fetchLiveGeminiResponse(cleanText, typingIndicator, finishAiResponse);
+    } else {
+      // Simulate realistic intelligent response after 600ms
+      setTimeout(() => {
+        const reply = generateCollegeAiResponse(cleanText);
+        finishAiResponse(reply);
+      }, 600);
     }
   }
 
-  async function fetchLiveGeminiResponse(prompt, typingIndicator) {
+  async function fetchLiveGeminiResponse(prompt, typingIndicator, callback) {
     const key = state.settings.geminiApiKey;
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
-
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{ text: `You are Study Buddy, an encouraging, sharp, and structured college study tutor. Answer the student's question clearly with headings, bullet points, and code/math notation where appropriate:\n\n${prompt}` }]
-          }]
-        })
-      });
-
-      if (!res.ok) throw new Error(`API returned ${res.status}`);
-      const data = await res.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response returned.';
-
-      if (typingIndicator) typingIndicator.remove();
-      state.chatHistory.push({
-        role: 'assistant',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        text: text
-      });
-      saveState();
-      renderAiChat();
-      playToneChime();
-    } catch (err) {
-      console.warn('Gemini API call failed, falling back to simulated tutor response:', err);
-      if (typingIndicator) typingIndicator.remove();
+    if (!key) {
       const fallback = generateCollegeAiResponse(prompt);
-      state.chatHistory.push({
-        role: 'assistant',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        text: `*(API note: live request failed or key is invalid. Switched to offline simulated tutor)*\n\n` + fallback
-      });
-      saveState();
-      renderAiChat();
+      callback(fallback);
+      return;
     }
+
+    const systemInstruction = `You are Study Buddy AI, an expert, encouraging, and sharp college academic tutor.
+Guidelines:
+1. Answer the user's EXACT question directly first. Never use generic intro filler or academic analysis templates.
+2. For programming questions (C, Python, Data Structures, etc.):
+   - Explain the requested concept directly in clear, beginner-friendly language.
+   - Provide correct syntax and a small, working code example.
+   - Explain the output and how the code works step by step.
+   - Do NOT introduce unrelated topics (e.g. do not discuss null pointers or time complexity unless asked).
+3. For errors and debugging: explain what went wrong in plain English, why it happened, and how to fix it with an example.
+4. For mathematics, physics, chemistry, and engineering: answer the specific question asked, state relevant formulas, and show clear, step-by-step logic.
+5. Keep answers concise, high-yield, and beginner-friendly. Structure your response with clean markdown headings and bullet points.`;
+
+    const requestBody = {
+      system_instruction: {
+        parts: [{ text: systemInstruction }]
+      },
+      contents: [{
+        parts: [{ text: prompt }]
+      }],
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 1200
+      }
+    };
+
+    // Try gemini-2.0-flash first, then gemini-1.5-flash
+    const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+    let lastErrorReason = '';
+
+    for (const model of models) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        if (!res.ok) {
+          let errDetail = `Status ${res.status}`;
+          try {
+            const errJson = await res.json();
+            if (errJson.error?.message) {
+              errDetail += `: ${errJson.error.message}`;
+            }
+          } catch (_) {}
+          lastErrorReason = errDetail;
+          if (res.status === 404) continue; // Try next model
+          break;
+        }
+
+        const data = await res.json();
+        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (reply && reply.trim()) {
+          callback(reply.trim());
+          return;
+        } else {
+          lastErrorReason = 'Empty response from model';
+          break;
+        }
+      } catch (err) {
+        lastErrorReason = err.name === 'AbortError' ? 'Request timed out (15s)' : (err.message || 'Network connection failed');
+        break;
+      }
+    }
+
+    // Gracefully use built-in fallback tutor
+    console.warn('Gemini live API unavailable, using offline tutor:', lastErrorReason);
+    const offlineReply = generateCollegeAiResponse(prompt);
+    const gracefulMessage = `> 💡 **Offline Mode Notice:** Live API is currently unavailable (${lastErrorReason || 'Request failed'}). Displaying comprehensive answer from the built-in Study Buddy academic tutor:\n\n${offlineReply}`;
+    callback(gracefulMessage);
   }
 
-  // Academic knowledge base simulation for college subjects
+  // ==========================================================================
+  // DIRECT ACADEMIC TUTOR SYSTEM (ACCURATE, SPECIFIC & BEGINNER-FRIENDLY)
+  // ==========================================================================
   function generateCollegeAiResponse(input) {
-    const q = input.toLowerCase();
+    const q = input.toLowerCase().trim();
+    const hasWord = (w) => new RegExp(`\\b${w}\\b`, 'i').test(q);
+    const isC = hasWord('c') || q.includes('in c') || q.includes('c program') || q.includes('c language') || q.includes('c code');
+    const isPython = hasWord('python') || q.includes('in python') || q.includes('python code') || q.includes('pythonic');
+
+    // ------------------------------------------------------------------------
+    // 1. C PROGRAMMING CONCEPTS (DIRECT & BEGINNER-FRIENDLY)
+    // ------------------------------------------------------------------------
+    // If-Else in C
+    if ((q.includes('if-else') || q.includes('if else') || (hasWord('if') && (hasWord('else') || q.includes('condition')))) && (isC || !isPython)) {
+      return `### If-Else Statements in C 🚦
+
+**1. What is If-Else?**
+An \`if-else\` statement lets your program make decisions based on a condition:
+- If the condition evaluates to **true** (non-zero), the code inside the \`if\` block executes.
+- If the condition evaluates to **false** (zero), the code inside the \`else\` block executes instead.
+
+**2. Basic Syntax:**
+\`\`\`c
+if (condition) {
+    // Code to run if condition is true
+} else {
+    // Code to run if condition is false
+}
+\`\`\`
+
+**3. Simple Working Example:**
+\`\`\`c
+#include <stdio.h>
+
+int main() {
+    int age = 18;
+
+    // Check if age is 18 or older
+    if (age >= 18) {
+        printf("You are eligible to vote!\\n");
+    } else {
+        printf("You are not eligible to vote yet.\\n");
+    }
+
+    return 0;
+}
+\`\`\`
+
+**4. Expected Output:**
+\`\`\`text
+You are eligible to vote!
+\`\`\`
+
+**5. How It Works:**
+1. The program declares an integer variable \`age\` initialized to \`18\`.
+2. It tests the condition \`age >= 18\`.
+3. Since 18 is greater than or equal to 18, the condition is **true**.
+4. The program executes \`printf("You are eligible to vote!\\n");\` inside the \`if\` block.
+5. The \`else\` block is completely skipped.
+*(If you changed \`age = 15\`, the condition would be false, and it would execute the \`else\` block instead).*`;
+    }
+
+    // Switch Case in C
+    if ((q.includes('switch') || q.includes('switch case')) && (isC || !isPython)) {
+      return `### Switch Statement in C 🔀
+
+**1. What is a Switch Statement?**
+A \`switch\` statement tests a single variable against multiple possible values (called \`case\`s) as a cleaner alternative to a long chain of \`if-else if\` statements.
+
+**2. Basic Syntax:**
+\`\`\`c
+switch (variable) {
+    case value1:
+        // code
+        break;
+    case value2:
+        // code
+        break;
+    default:
+        // code if no case matches
+}
+\`\`\`
+
+**3. Simple Working Example:**
+\`\`\`c
+#include <stdio.h>
+
+int main() {
+    int day = 3;
+
+    switch (day) {
+        case 1:
+            printf("Monday\\n");
+            break;
+        case 2:
+            printf("Tuesday\\n");
+            break;
+        case 3:
+            printf("Wednesday\\n");
+            break;
+        default:
+            printf("Another day\\n");
+    }
+
+    return 0;
+}
+\`\`\`
+
+**4. Expected Output:**
+\`\`\`text
+Wednesday
+\`\`\`
+
+**5. How It Works:**
+- The program evaluates \`day\` (value 3).
+- It jumps directly to \`case 3:\` and prints *"Wednesday"*.
+- The \`break;\` statement stops execution so it doesn't fall through to subsequent cases.`;
+    }
+
+    // For Loop in C
+    if ((q.includes('for loop') || (q.includes('loop') && hasWord('for'))) && (isC || !isPython)) {
+      return `### For Loop in C 🔄
+
+**1. What is a For Loop?**
+A \`for\` loop repeats a block of code a specific number of times.
+
+**2. Basic Syntax:**
+\`\`\`c
+for (initialization; condition; update) {
+    // code to repeat
+}
+\`\`\`
+
+**3. Simple Working Example:**
+\`\`\`c
+#include <stdio.h>
+
+int main() {
+    // Print numbers from 1 to 5
+    for (int i = 1; i <= 5; i++) {
+        printf("Count: %d\\n", i);
+    }
+    return 0;
+}
+\`\`\`
+
+**4. Expected Output:**
+\`\`\`text
+Count: 1
+Count: 2
+Count: 3
+Count: 4
+Count: 5
+\`\`\`
+
+**5. How It Works:**
+1. \`int i = 1\`: The loop counter starts at 1.
+2. \`i <= 5\`: Checks if \`i\` is less than or equal to 5 (true).
+3. The body runs, printing the current value.
+4. \`i++\`: Increments \`i\` by 1.
+5. Steps 2–4 repeat until \`i\` reaches 6, when the loop terminates.`;
+    }
+
+    // While & Do-While Loops in C
+    if ((q.includes('while') || q.includes('do-while') || q.includes('do while')) && (isC || !isPython)) {
+      return `### While & Do-While Loops in C 🔁
+
+**1. What is a While Loop?**
+A \`while\` loop repeatedly executes code as long as a test condition remains true.
+
+**2. Basic Syntax:**
+\`\`\`c
+while (condition) {
+    // code runs while condition is true
+}
+\`\`\`
+
+**3. Simple Working Example:**
+\`\`\`c
+#include <stdio.h>
+
+int main() {
+    int count = 3;
+
+    while (count > 0) {
+        printf("%d...\\n", count);
+        count--; // Decrement to avoid infinite loop!
+    }
+    printf("Liftoff!\\n");
+    return 0;
+}
+\`\`\`
+
+**4. Expected Output:**
+\`\`\`text
+3...
+2...
+1...
+Liftoff!
+\`\`\`
+
+**5. While vs. Do-While:**
+- **\`while\`**: Checks the condition **before** entering the loop (may run 0 times).
+- **\`do-while\`**: Checks the condition **after** executing the body, so it is guaranteed to run **at least once**:
+  \`\`\`c
+  do {
+      printf("Runs at least once\\n");
+  } while (0);
+  \`\`\``;
+    }
+
+    // Functions in C
+    if (q.includes('function') && (isC || !isPython)) {
+      return `### Functions in C 🛠️
+
+**1. What is a Function?**
+A function is a reusable block of code that performs a specific task. It can accept inputs (parameters) and return an output value.
+
+**2. Basic Syntax:**
+\`\`\`c
+return_type function_name(parameter_type param1, parameter_type param2) {
+    // code
+    return value;
+}
+\`\`\`
+
+**3. Simple Working Example:**
+\`\`\`c
+#include <stdio.h>
+
+// Function definition: adds two integers
+int addNumbers(int a, int b) {
+    return a + b;
+}
+
+int main() {
+    int result = addNumbers(5, 7); // Call the function
+    printf("The sum is: %d\\n", result);
+    return 0;
+}
+\`\`\`
+
+**4. Expected Output:**
+\`\`\`text
+The sum is: 12
+\`\`\`
+
+**5. How It Works:**
+1. When \`addNumbers(5, 7)\` is called, \`5\` and \`7\` are passed into parameters \`a\` and \`b\`.
+2. The function calculates \`5 + 7\` and returns \`12\`.
+3. \`main\` stores \`12\` in \`result\` and displays it.`;
+    }
+
+    // Arrays in C
+    if (q.includes('array') && (isC || !isPython)) {
+      return `### Arrays in C 📊
+
+**1. What is an Array?**
+An array is a collection of items of the **same data type** stored sequentially in memory. Items are accessed using a zero-based index (\`0\` to \`size - 1\`).
+
+**2. Basic Syntax:**
+\`\`\`c
+data_type array_name[size];
+\`\`\`
+
+**3. Simple Working Example:**
+\`\`\`c
+#include <stdio.h>
+
+int main() {
+    // Declare and initialize an array of 4 integers
+    int scores[4] = {85, 90, 78, 92};
+
+    // Print array elements using a loop
+    for (int i = 0; i < 4; i++) {
+        printf("Score %d: %d\\n", i + 1, scores[i]);
+    }
+    return 0;
+}
+\`\`\`
+
+**4. Expected Output:**
+\`\`\`text
+Score 1: 85
+Score 2: 90
+Score 3: 78
+Score 4: 92
+\`\`\`
+
+**5. Key Rules:**
+- \`scores[0]\` is the first element; \`scores[3]\` is the fourth element.
+- Accessing an index outside the range (like \`scores[10]\`) causes undefined behavior!`;
+    }
+
+    // Pointers in C
+    if ((q.includes('pointer') || q.includes('dereference')) && (isC || !isPython)) {
+      return `### Pointers in C Explained Simply 🎯
+
+**1. What is a Pointer?**
+A pointer is a variable that stores the **memory address** of another variable.
+
+**2. The Two Key Operators:**
+- \`&\` (**Address-of operator**): Gets the memory address where a variable is stored.
+- \`*\` (**Dereference operator**): Accesses or changes the value stored at that address.
+
+**3. Simple Working Example:**
+\`\`\`c
+#include <stdio.h>
+
+int main() {
+    int number = 42;
+    int *ptr = &number; // ptr stores the address of number
+
+    printf("Value of number: %d\\n", number);
+    printf("Value via pointer (*ptr): %d\\n", *ptr);
+
+    // Change number's value using the pointer
+    *ptr = 100;
+    printf("New value of number: %d\\n", number);
+
+    return 0;
+}
+\`\`\`
+
+**4. Expected Output:**
+\`\`\`text
+Value of number: 42
+Value via pointer (*ptr): 42
+New value of number: 100
+\`\`\`
+
+**5. How It Works:**
+- \`int *ptr = &number;\` links \`ptr\` to \`number\`'s memory box.
+- Assigning \`*ptr = 100;\` directly modifies \`number\` from a distance.`;
+    }
+
+    // Dynamic Memory in C (malloc, free)
+    if (q.includes('malloc') || q.includes('calloc') || q.includes('dynamic memory') || (q.includes('free') && q.includes('memory'))) {
+      return `### Dynamic Memory Allocation in C (\`malloc\` & \`free\`) 💾
+
+**1. What is Dynamic Memory?**
+Dynamic memory allows you to allocate memory on the **Heap** at runtime when you don't know the exact size needed ahead of time.
+
+**2. Key Functions (\`<stdlib.h>\`):**
+- \`malloc(size)\`: Allocates memory of requested byte size.
+- \`free(ptr)\`: Releases heap memory back to the system.
+
+**3. Simple Working Example:**
+\`\`\`c
+#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    // Allocate space for 3 integers on the heap
+    int *arr = (int *)malloc(3 * sizeof(int));
+
+    // Always check if allocation succeeded
+    if (arr == NULL) {
+        printf("Memory allocation failed!\\n");
+        return 1;
+    }
+
+    arr[0] = 10;
+    arr[1] = 20;
+    arr[2] = 30;
+
+    printf("First element: %d, Third element: %d\\n", arr[0], arr[2]);
+
+    // Always free memory when done to prevent memory leaks!
+    free(arr);
+    arr = NULL; // Avoid dangling pointer
+
+    return 0;
+}
+\`\`\`
+
+**4. Expected Output:**
+\`\`\`text
+First element: 10, Third element: 30
+\`\`\``;
+    }
+
+    // Strings in C
+    if ((q.includes('string') || q.includes('char array') || q.includes('strcpy') || q.includes('strlen')) && (isC || !isPython)) {
+      return `### Strings in C 🧵
+
+**1. What is a String in C?**
+C does not have a native \`string\` type. Instead, a string is a character array terminated by a special null character (\`'\\0'\`).
+
+**2. Declaration & Safe Input:**
+\`\`\`c
+#include <stdio.h>
+#include <string.h>
+
+int main() {
+    char name[50] = "Study Buddy";
+
+    printf("String: %s\\n", name);
+    printf("Length: %lu characters\\n", strlen(name));
+
+    return 0;
+}
+\`\`\`
+
+**3. Expected Output:**
+\`\`\`text
+String: Study Buddy
+Length: 11 characters
+\`\`\`
+
+**4. Safe Input Tip:**
+Never use \`gets()\` because it causes buffer overflows. Use \`fgets(buffer, sizeof(buffer), stdin);\` instead!`;
+    }
+
+    // Structures (struct) in C
+    if (q.includes('struct') || q.includes('typedef') || q.includes('union')) {
+      return `### Structures (\`struct\`) in C 📦
+
+**1. What is a Struct?**
+A \`struct\` allows you to group variables of different data types together under one custom name.
+
+**2. Simple Working Example:**
+\`\`\`c
+#include <stdio.h>
+
+// Define a Student struct
+typedef struct {
+    char name[30];
+    int rollNumber;
+    float gpa;
+} Student;
+
+int main() {
+    Student s1 = {"Maya", 101, 3.85};
+
+    printf("Student Name: %s\\n", s1.name);
+    printf("Roll Number:  %d\\n", s1.rollNumber);
+    printf("GPA:          %.2f\\n", s1.gpa);
+
+    return 0;
+}
+\`\`\`
+
+**3. Expected Output:**
+\`\`\`text
+Student Name: Maya
+Roll Number:  101
+GPA:          3.85
+\`\`\`
+
+**4. Member Access:**
+- Use the dot operator (\`.\`) for direct struct variables: \`s1.gpa\`
+- Use the arrow operator (\`->\`) when working with a pointer to a struct: \`ptr->gpa\``;
+    }
+
+    // Recursion in C
+    if ((q.includes('recursion') || q.includes('recursive')) && (isC || !isPython)) {
+      return `### Recursion in C 🔄
+
+**1. What is Recursion?**
+Recursion is when a function calls itself to solve a smaller instance of the same problem. Every recursive function must have:
+1. **Base Case:** A stopping condition that prevents infinite execution.
+2. **Recursive Step:** The function calling itself with an updated argument.
+
+**2. Simple Working Example (Factorial):**
+\`\`\`c
+#include <stdio.h>
+
+int factorial(int n) {
+    if (n <= 1) return 1; // BASE CASE: 0! = 1, 1! = 1
+    return n * factorial(n - 1); // RECURSIVE STEP
+}
+
+int main() {
+    int num = 4;
+    printf("Factorial of %d is: %d\\n", num, factorial(num));
+    return 0;
+}
+\`\`\`
+
+**3. Expected Output:**
+\`\`\`text
+Factorial of 4 is: 24
+\`\`\`
+
+**4. How It Works:**
+\`factorial(4)\` calculates $4 \\times 3 \\times 2 \\times 1 = 24$. Once $n$ reaches 1, the base case triggers and the results multiply back up the stack.`;
+    }
+
+    // ------------------------------------------------------------------------
+    // 2. PYTHON PROGRAMMING (DIRECT & BEGINNER-FRIENDLY)
+    // ------------------------------------------------------------------------
+    // If-Else in Python
+    if (isPython && (q.includes('if') || q.includes('condition') || q.includes('elif'))) {
+      return `### If-Else in Python 🐍
+
+**1. What is If-Else in Python?**
+An \`if-else\` statement evaluates a condition. If the condition is \`True\`, the indented block under \`if\` runs; otherwise, the block under \`else\` runs.
+
+**2. Basic Syntax:**
+\`\`\`python
+if condition:
+    # runs if condition is True
+elif another_condition:
+    # optional secondary condition
+else:
+    # runs if all above conditions are False
+\`\`\`
+
+**3. Simple Working Example:**
+\`\`\`python
+score = 82
+
+if score >= 90:
+    print("Grade: A")
+elif score >= 75:
+    print("Grade: B")
+else:
+    print("Grade: C or below")
+\`\`\`
+
+**4. Expected Output:**
+\`\`\`text
+Grade: B
+\`\`\`
+
+**5. How It Works:**
+- Python uses **indentation** (4 spaces) instead of curly braces \`{}\`.
+- Since 82 is not $\\ge 90$, the first condition is False.
+- The \`elif\` condition \`82 >= 75\` is True, so it prints \`Grade: B\` and finishes.`;
+    }
+
+    // Loops in Python
+    if (isPython && (q.includes('loop') || q.includes('for') || q.includes('while') || q.includes('range'))) {
+      return `### Loops in Python (For & While) 🔁
+
+**1. For Loop with \`range()\`:**
+\`\`\`python
+# Repeat code from 1 to 5
+for i in range(1, 6):
+    print(f"Number: {i}")
+\`\`\`
+Output:
+\`\`\`text
+Number: 1
+Number: 2
+Number: 3
+Number: 4
+Number: 5
+\`\`\`
+
+**2. While Loop:**
+\`\`\`python
+count = 3
+while count > 0:
+    print(count)
+    count -= 1
+print("Done!")
+\`\`\`
+Output:
+\`\`\`text
+3
+2
+1
+Done!
+\`\`\``;
+    }
+
+    // Python Lists & Comprehensions
+    if (isPython && (q.includes('list') || q.includes('comprehension'))) {
+      return `### Python Lists & List Comprehensions 🐍
+
+**1. Python Lists:**
+A list is an ordered, mutable collection of items.
+\`\`\`python
+fruits = ["apple", "banana", "cherry"]
+fruits.append("mango") # Adds to end
+print(fruits[0])       # "apple"
+\`\`\`
+
+**2. List Comprehension:**
+A clean, concise one-line syntax to create a new list from an existing iterable:
+\`\`\`python
+numbers = [1, 2, 3, 4, 5, 6]
+
+# Create a list of squares for even numbers only
+even_squares = [x**2 for x in numbers if x % 2 == 0]
+print(even_squares)
+\`\`\`
+
+**3. Output:**
+\`\`\`text
+[4, 16, 36]
+\`\`\``;
+    }
+
+    // Python Dictionaries
+    if (isPython && (q.includes('dict') || q.includes('dictionary') || q.includes('set'))) {
+      return `### Python Dictionaries (\`dict\`) 📖
+
+**1. What is a Dictionary?**
+A dictionary stores data in **key-value pairs**, allowing fast $O(1)$ lookups by key.
+
+**2. Simple Working Example:**
+\`\`\`python
+student = {"name": "Maya", "major": "Computer Science", "gpa": 3.9}
+
+# Accessing values safely using .get() (prevents KeyError crash)
+print("Student Name:", student["name"])
+print("GPA:", student.get("gpa", "N/A"))
+
+# Adding a new key-value pair
+student["grad_year"] = 2026
+print("Updated dict:", student)
+\`\`\`
+
+**3. Expected Output:**
+\`\`\`text
+Student Name: Maya
+GPA: 3.9
+Updated dict: {'name': 'Maya', 'major': 'Computer Science', 'gpa': 3.9, 'grad_year': 2026}
+\`\`\``;
+    }
+
+    // Python OOP / Classes
+    if (isPython && (q.includes('class') || q.includes('oop') || q.includes('__init__') || q.includes('self'))) {
+      return `### Python Object-Oriented Programming (Classes & Objects) 🧱
+
+**1. Core Concepts:**
+- \`class\`: Blueprint for creating objects.
+- \`__init__(self, ...)\`: Constructor method called when a new object is created.
+- \`self\`: Refers to the specific instance of the class.
+
+**2. Simple Working Example:**
+\`\`\`python
+class Book:
+    def __init__(self, title, pages):
+        self.title = title
+        self.pages = pages
+
+    def get_summary(self):
+        return f"'{self.title}' has {self.pages} pages."
+
+my_book = Book("Clean Code", 464)
+print(my_book.get_summary())
+\`\`\`
+
+**3. Expected Output:**
+\`\`\`text
+'Clean Code' has 464 pages.
+\`\`\``;
+    }
+
+    // ------------------------------------------------------------------------
+    // 3. PROGRAMMING ERRORS & DEBUGGING (PLAIN ENGLISH & CLEAR FIXES)
+    // ------------------------------------------------------------------------
+    if (q.includes('segmentation fault') || q.includes('segfault') || q.includes('sigsegv') || q.includes('core dumped')) {
+      return `### Debugging: Segmentation Fault (SIGSEGV) 💥
+
+**1. What it means:**
+Your program attempted to read or write to a memory address that it does not have permission to access.
+
+**2. The 3 Most Common Causes:**
+1. **Dereferencing a NULL or uninitialized pointer:**
+   \`\`\`c
+   int *p = NULL;
+   *p = 5; // CRASH!
+   \`\`\`
+2. **Accessing array index out of bounds:**
+   \`\`\`c
+   int arr[5];
+   arr[100] = 50; // CRASH!
+   \`\`\`
+3. **Infinite recursion:** Missing a base case causes stack memory to run out.
+
+**3. How to Fix:**
+- Verify pointers are not \`NULL\` before using them: \`if (p != NULL) *p = 5;\`
+- Check that loop index limits stay strictly within \`0\` to \`size - 1\`.`;
+    }
+
+    if (q.includes('nullpointer') || q.includes('nonetype') || q.includes('null reference') || q.includes('undefined is not') || q.includes('has no attribute')) {
+      return `### Debugging: NullPointer & NoneType Errors 🔍
+
+**1. What it means:**
+You tried to access a property or call a method on a variable that currently holds **nothing** (\`null\` in C/Java, \`None\` in Python, \`undefined\` in JS).
+
+**2. Example in Python & Fix:**
+\`\`\`python
+# Cause:
+user = find_user(101) # returns None if user not found
+print(user.name)       # AttributeError: 'NoneType' object has no attribute 'name'
+
+# Fix (Add a check):
+if user is not None:
+    print(user.name)
+else:
+    print("User not found!")
+\`\`\``;
+    }
+
+    if (q.includes('index out of') || q.includes('out of bounds') || q.includes('indexerror')) {
+      return `### Debugging: Index Out of Bounds Error 🚫
+
+**1. What it means:**
+You tried to access an element at an index that doesn't exist in the list or array (e.g. index $\\ge$ length).
+
+**2. Common Off-by-One Mistake:**
+\`\`\`python
+items = [10, 20, 30] # Length is 3 (valid indices: 0, 1, 2)
+
+# WRONG:
+for i in range(len(items) + 1):
+    print(items[i]) # IndexError!
+
+# CORRECT:
+for item in items:
+    print(item)
+\`\`\`
+Remember: In C, Python, Java, and JS, indexing starts at **0** and ends at **length - 1**.`;
+    }
+
+    if (q.includes('memory leak') || q.includes('valgrind')) {
+      return `### Debugging: Memory Leaks in C 💧
+
+**1. What is a Memory Leak?**
+When memory allocated with \`malloc()\` or \`calloc()\` is no longer needed but never released with \`free()\`. Over time, unused memory accumulates until the program runs out of RAM.
+
+**2. The Rule:**
+Every \`malloc()\` must have a matching \`free()\`:
+\`\`\`c
+void loadData() {
+    int *buffer = (int *)malloc(50 * sizeof(int));
+    // ... work with buffer ...
+    free(buffer); // Clean up!
+    buffer = NULL;
+}
+\`\`\``;
+    }
+
+    if (q.includes('stack overflow') || (q.includes('recursion') && q.includes('error'))) {
+      return `### Debugging: Stack Overflow & Recursion Errors 🔄
+
+**1. What it means:**
+A recursive function called itself too many times without stopping, exhausting the call stack.
+
+**2. How to Fix:**
+Always verify that your **base case** is correct and reachable:
+\`\`\`python
+# BAD (Infinite recursion):
+def count_down(n):
+    print(n)
+    count_down(n - 1)
+
+# GOOD (Proper base case):
+def count_down(n):
+    if n <= 0: # Base case: stop!
+        return
+    print(n)
+    count_down(n - 1)
+\`\`\``;
+    }
+
+    if (q.includes('undefined reference') || q.includes('linker error') || q.includes('ld returned')) {
+      return `### Debugging: Linker Error ("Undefined Reference") 🔗
+
+**1. What it means:**
+The compiler verified your syntax, but the **linker** could not find the compiled object code for a function you called.
+
+**2. Common Fixes:**
+- If your project has multiple \`.c\` files, compile them together:
+  \`\`\`bash
+  gcc main.c utils.c -o app
+  \`\`\`
+- If using \`<math.h>\` functions like \`sqrt()\`, add \`-lm\` at the end:
+  \`\`\`bash
+  gcc main.c -lm -o app
+  \`\`\``;
+    }
+
+    // ------------------------------------------------------------------------
+    // 4. DATA STRUCTURES & ALGORITHMS
+    // ------------------------------------------------------------------------
+    if (q.includes('linked list')) {
+      return `### Linked Lists Explained Simply ⛓️
+
+**1. What is a Linked List?**
+A linked list is a linear data structure where elements (called **nodes**) are not stored in contiguous memory. Instead, each node contains:
+1. **Data:** The value being stored.
+2. **Next pointer:** An address pointing to the next node in the list.
+
+**2. Node Structure in C:**
+\`\`\`c
+struct Node {
+    int data;
+    struct Node *next;
+};
+\`\`\`
+
+**3. Array vs. Linked List:**
+- **Array:** Fast $O(1)$ random access by index, but fixed size and expensive $O(n)$ insertions at the beginning.
+- **Linked List:** Dynamic size and fast $O(1)$ insertions at the head, but $O(n)$ sequential access to find an element.`;
+    }
+
+    if (hasWord('stack') || q.includes('lifo')) {
+      return `### Stacks (LIFO - Last In, First Out) 🥞
+
+**1. What is a Stack?**
+A stack is a container where elements are added and removed from the same end (the **top**), like a stack of plates.
+- **LIFO:** The last item pushed onto the stack is the first item popped off.
+
+**2. Core Operations:**
+- \`push(x)\`: Add item $x$ to the top ($O(1)$).
+- \`pop()\`: Remove and return the top item ($O(1)$).
+- \`peek()\`: View the top item without removing it ($O(1)$).
+
+**3. Real-World Applications:**
+- Browser Back/Forward history
+- Text editor Undo/Redo operations
+- Function call execution stack in programming languages`;
+    }
+
+    if (hasWord('queue') || q.includes('fifo')) {
+      return `### Queues (FIFO - First In, First Out) 🚶‍♂️
+
+**1. What is a Queue?**
+A queue is a linear collection where items are inserted at the **rear** and removed from the **front**, like a line of people at a ticket counter.
+- **FIFO:** The first item added is the first one processed.
+
+**2. Core Operations:**
+- \`enqueue(x)\`: Insert item $x$ at the rear ($O(1)$).
+- \`dequeue()\`: Remove item from the front ($O(1)$).
+
+**3. Key Applications:**
+- CPU process scheduling (Round-Robin)
+- Print job queues
+- Breadth-First Search (BFS) in graphs`;
+    }
+
+    if (q.includes('bst') || q.includes('binary search tree') || q.includes('tree traversal')) {
+      return `### Binary Search Tree (BST) & Tree Traversals 🌳
+
+**1. What is a BST?**
+A Binary Search Tree is a binary tree where for every node:
+- All values in the **left subtree** are **smaller** than the node.
+- All values in the **right subtree** are **greater** than the node.
+
+**2. The 3 Depth Traversals:**
+- **In-Order (Left, Root, Right):** Visits keys in **strictly sorted order**!
+- **Pre-Order (Root, Left, Right):** Great for cloning tree structures.
+- **Post-Order (Left, Right, Root):** Used for deleting trees bottom-up.
+
+**3. Search Complexity:**
+- **Average:** $O(\\log n)$
+- **Worst Case (skewed tree):** $O(n)$`;
+    }
+
+    if (q.includes('binary search')) {
+      return `### Binary Search Algorithm 🔍
+
+**1. How it works:**
+Binary Search finds a target in a **sorted array** in **$O(\\log n)$** time by repeatedly dividing the search interval in half:
+1. Compare target with the middle element.
+2. If target matches, return the index.
+3. If target is smaller, search the left half.
+4. If target is larger, search the right half.
+
+**2. Simple Working Example (C):**
+\`\`\`c
+int binarySearch(int arr[], int size, int target) {
+    int low = 0, high = size - 1;
+    while (low <= high) {
+        int mid = low + (high - low) / 2;
+        if (arr[mid] == target) return mid;
+        if (arr[mid] < target) low = mid + 1;
+        else high = mid - 1;
+    }
+    return -1; // Target not found
+}
+\`\`\``;
+    }
 
     if (q.includes('dijkstra')) {
       return `### Dijkstra's Shortest Path Algorithm 🧭
 
-**Core Idea:**
-Dijkstra's algorithm finds the shortest path from a starting vertex to all other vertices in a weighted graph with **non-negative edge weights**. It follows a **greedy** approach.
+**1. Core Idea:**
+Dijkstra's algorithm finds the shortest path from a single source node to all other nodes in a weighted graph with **non-negative weights** using a greedy approach.
 
-#### Step-by-Step Execution:
-1. **Initialize Distances:**
-   - Set \`dist[source] = 0\` and \`dist[v] = ∞\` for all other vertices $v$.
-   - Insert all vertices into a **Min-Priority Queue** (ordered by distance).
-2. **Greedy Traversal:**
-   - Extract vertex $u$ with the minimum distance from the queue.
-   - For every neighbor $v$ of $u$:
-     \`\`\`text
-     if dist[u] + weight(u, v) < dist[v]:
-         dist[v] = dist[u] + weight(u, v)
-         decreaseKey(priorityQueue, v)
-     \`\`\`
-3. **Complexity:**
-   - **Time:** $O((V + E) \\log V)$ using a Min-Heap.
-   - **Space:** $O(V)$ for the distance array and priority queue.
+**2. Step-by-Step:**
+1. Set \`dist[source] = 0\` and \`dist[all others] = ∞\`.
+2. Insert all vertices into a **Min-Priority Queue**.
+3. Extract the unvisited node $u$ with the smallest distance.
+4. For each neighbor $v$ of $u$, if \`dist[u] + weight(u, v) < dist[v]\`, update \`dist[v]\`.
+5. Repeat until all nodes are visited.
 
-💡 *Exam Tip:* Remember that Dijkstra fails if there are negative edge weights — use **Bellman-Ford** instead!`;
+**3. Complexity:** $O((V + E) \\log V)$ with a binary heap.
+⚠️ *Note:* Fails if any edge is negative (use **Bellman-Ford** instead).`;
     }
 
     if (q.includes('dynamic programming') || q.includes('knapsack')) {
       return `### Dynamic Programming: 0/1 Knapsack Problem 🎒
 
-**Problem Definition:**
-Given $n$ items with values $v_i$ and weights $w_i$, find the maximum value that fits in a knapsack of capacity $W$.
+**1. Problem Definition:**
+Given $n$ items with values $v_i$ and weights $w_i$, select items to maximize total value without exceeding a knapsack weight capacity $W$.
 
-#### Recurrence Relation:
-For item $i$ and capacity $w$:
+**2. Recurrence Relation:**
 \`\`\`text
 DP[i][w] = DP[i-1][w]                           if w_i > w (item too heavy)
 DP[i][w] = max(DP[i-1][w], v_i + DP[i-1][w - w_i]) otherwise
 \`\`\`
 
-#### Key Characteristics:
-- **Optimal Substructure:** The optimal solution is constructed from optimal solutions to subproblems.
-- **Overlapping Subproblems:** Subproblem values are reused multiple times, saving exponential recursion via memoization or tabulation.
-
-⏱️ **Time Complexity:** $O(n \\times W)$ (pseudo-polynomial).  
-💾 **Space Optimization:** Can be reduced to $O(W)$ space using a single 1D array traversed backwards.`;
+**3. Key Idea:**
+Instead of recomputing the same sub-capacities exponentially ($O(2^n)$), we store subproblem answers in a 2D/1D table, solving it in **$O(n \\times W)$** time.`;
     }
 
-    if (q.includes('7-day') || q.includes('plan') || q.includes('schedule') || q.includes('cram')) {
-      return `### 📅 High-Yield 7-Day College Final Exam Roadmap
+    if (q.includes('sorting') || q.includes('quicksort') || q.includes('merge sort') || q.includes('bubble sort') || q.includes('big o')) {
+      return `### Sorting Algorithms & Big-O Comparison ⚡
 
-Here is a scientifically proven **Spaced Repetition & Pomodoro** schedule:
+| Algorithm | Average Time | Worst Time | Space | In-Place? |
+|---|---|---|---|---|
+| **Merge Sort** | $O(n \\log n)$ | $O(n \\log n)$ | $O(n)$ | No |
+| **Quick Sort** | $O(n \\log n)$ | $O(n^2)$ | $O(\\log n)$ | Yes |
+| **Insertion Sort** | $O(n^2)$ | $O(n^2)$ | $O(1)$ | Yes |
+| **Bubble Sort** | $O(n^2)$ | $O(n^2)$ | $O(1)$ | Yes |
 
-- **Day 1: Syllabus Audit & High-Weightage Chapters**
-  - Group chapters by exam weightage.
-  - Complete 4 Pomodoro blocks tackling the single most difficult topic.
-- **Day 2: Active Recall & Formula Sheets**
-  - Write down core theorems, derivations, and definitions from memory.
-  - Fix conceptual gaps using textbooks or lecture slides.
-- **Day 3: Previous Year Questions (PYQs) - Part 1**
-  - Solve the last 3 years of question papers in an untimed, deep-learning mode.
-- **Day 4: Timed Mock Exam 1**
-  - Sit down for a full 3-hour timed exam without notes.
-  - Log your score in the Study Buddy **Mock Test Tracker**!
-- **Day 5: Error Analysis & Weak Area Sprint**
-  - Dedicate 3-4 hours strictly to the questions you got wrong on Mock 1.
-- **Day 6: Timed Mock Exam 2 & High-Speed Flashcards**
-  - Second timed mock test + rapid active recall review.
-- **Day 7: Light Review & Mental Reset**
-  - Review formula sheets and sleep 8 hours. Do not pull an all-nighter! 🛌`;
+💡 *Quick Tip:* Merge Sort is predictable and stable; QuickSort is usually faster in practice for arrays due to lower overhead and cache locality.`;
     }
 
-    if (q.includes('quiz') || q.includes('test me') || q.includes('operating system')) {
-      return `### 🧠 Operating Systems Revision Quiz (Test Your Recall!)
+    // ------------------------------------------------------------------------
+    // 5. MATHEMATICS
+    // ------------------------------------------------------------------------
+    if (q.includes('derivative') || q.includes('differentiat') || q.includes('chain rule') || q.includes('product rule')) {
+      return `### Calculus: Derivatives & Rules 📐
 
-**Question 1 (Process Scheduling):**
-What is the primary advantage of the **Multi-Level Feedback Queue (MLFQ)** over standard Round-Robin?
-- *Answer Hint:* Think about how CPU-bound vs I/O-bound processes are prioritized.
+**1. What is a Derivative?**
+A derivative measures the **instantaneous rate of change** of a function with respect to a variable (the slope of the tangent line).
 
-**Question 2 (Deadlocks):**
-What are the **4 Coffman conditions** necessary for a deadlock to occur?
+**2. Core Rules:**
+- **Power Rule:** $\\frac{d}{dx} x^n = n x^{n-1}$  *(e.g., $\\frac{d}{dx} x^3 = 3x^2$)*
+- **Product Rule:** $(u \\cdot v)' = u'v + uv'$
+- **Quotient Rule:** $\\left(\\frac{u}{v}\\right)' = \\frac{u'v - uv'}{v^2}$
+- **Chain Rule:** $\\frac{d}{dx} f(g(x)) = f'(g(x)) \\cdot g'(x)$
+
+**3. Simple Example:**
+To differentiate $f(x) = (2x + 1)^3$:
+- Let $g(x) = 2x + 1$ (derivative is 2).
+- By chain rule: $f'(x) = 3(2x + 1)^2 \\cdot 2 = 6(2x + 1)^2$.`;
+    }
+
+    if (q.includes('integral') || q.includes('integration')) {
+      return `### Calculus: Integrals & Rules 📐
+
+**1. What is an Integral?**
+An integral represents the **accumulation of quantities** and computes the **area under a curve** (the inverse operation of differentiation).
+
+**2. Essential Formulas:**
+- **Power Rule:** $\\int x^n \\, dx = \\frac{x^{n+1}}{n+1} + C \\quad (n \\neq -1)$
+- **Log Rule:** $\\int \\frac{1}{x} \\, dx = \\ln|x| + C$
+- **Exponential:** $\\int e^x \\, dx = e^x + C$
+
+**3. Integration by Parts:**
+$$\\int u \\, dv = uv - \\int v \\, du$$
+Choose $u$ using the **ILATE** priority rule: **I**nverse trig, **L**og, **A**lgebraic, **T**rig, **E**xponential.`;
+    }
+
+    if (q.includes('matrix multiplication') || (q.includes('matrix') && q.includes('multiply')) || q.includes('matrices')) {
+      return `### Linear Algebra: Matrix Multiplication 🔢
+
+**1. Dimension Condition:**
+To multiply matrix $A$ ($m \\times k$) by matrix $B$ ($k \\times n$), the **number of columns in $A$ must equal the number of rows in $B$**. The resulting matrix will have size $m \\times n$.
+
+**2. Calculation Rule:**
+Each element $(i, j)$ in the product is the **dot product** of row $i$ of $A$ and column $j$ of $B$:
+$$C_{ij} = \\sum_{r=1}^k A_{ir} B_{rj}$$
+
+**3. Simple $2 \\times 2$ Example:**
+$$\\begin{pmatrix} 1 & 2 \\\\ 3 & 4 \\end{pmatrix} \\begin{pmatrix} 5 & 6 \\\\ 7 & 8 \\end{pmatrix} = \\begin{pmatrix} (1\\cdot 5 + 2\\cdot 7) & (1\\cdot 6 + 2\\cdot 8) \\\\ (3\\cdot 5 + 4\\cdot 7) & (3\\cdot 6 + 4\\cdot 8) \\end{pmatrix} = \\begin{pmatrix} 19 & 22 \\\\ 43 & 50 \\end{pmatrix}$$`;
+    }
+
+    if (q.includes('eigenvalue') || q.includes('eigenvector')) {
+      return `### Linear Algebra: Eigenvalues & Eigenvectors 🔢
+
+**1. The Fundamental Equation:**
+$$A \\vec{v} = \\lambda \\vec{v} \\quad (\\vec{v} \\neq \\mathbf{0})$$
+Multiplying matrix $A$ by eigenvector $\\vec{v}$ only **scales** $\\vec{v}$ by factor $\\lambda$ (the eigenvalue) without changing its direction.
+
+**2. How to Find Them:**
+1. Solve the **characteristic equation**: $\\det(A - \\lambda I) = 0$ to get eigenvalues $\\lambda$.
+2. For each $\\lambda$, substitute back into $(A - \\lambda I)\\vec{v} = \\mathbf{0}$ and solve the system to find the eigenvectors $\\vec{v}$.`;
+    }
+
+    // ------------------------------------------------------------------------
+    // 6. PHYSICS
+    // ------------------------------------------------------------------------
+    if (q.includes('newton')) {
+      return `### Physics: Newton's 3 Laws of Motion 🚀
+
+**1. First Law (Law of Inertia):**
+An object remains at rest or moves at a constant velocity in a straight line unless acted upon by a net external force.
+- *Example:* A passenger slides forward when a bus suddenly brakes.
+
+**2. Second Law ($F = ma$):**
+The acceleration of an object is directly proportional to the net force acting on it and inversely proportional to its mass:
+$$\\vec{F} = m\\vec{a}$$
+- *Example:* Pushing a heavy cart requires twice as much force as pushing a light cart to achieve the same acceleration.
+
+**3. Third Law (Action-Reaction):**
+For every action, there is an equal and opposite reaction:
+$$\\vec{F}_{AB} = -\\vec{F}_{BA}$$
+- *Example:* A rocket pushes exhaust gas backward, and the gas pushes the rocket forward.`;
+    }
+
+    if (q.includes('ohm')) {
+      return `### Physics & Electrical: Ohm's Law ⚡
+
+**1. The Law:**
+Ohm's Law states that the current ($I$) flowing through a conductor between two points is directly proportional to the voltage ($V$) across the two points and inversely proportional to resistance ($R$):
+$$V = I \\cdot R$$
+
+**2. Units:**
+- $V$ = Voltage in Volts (V) — electrical push
+- $I$ = Current in Amperes (A) — rate of charge flow
+- $R$ = Resistance in Ohms ($\\Omega$) — opposition to flow
+
+**3. Simple Example:**
+If a $12\\text{V}$ battery is connected across a $4\\Omega$ resistor:
+$$I = \\frac{V}{R} = \\frac{12}{4} = 3\\text{ Amperes}$$`;
+    }
+
+    // ------------------------------------------------------------------------
+    // 7. CHEMISTRY
+    // ------------------------------------------------------------------------
+    if (q.includes('sn1') || q.includes('sn2')) {
+      return `### Chemistry: SN1 vs SN2 Mechanisms 🧪
+
+| Feature | SN1 (Unimolecular) | SN2 (Biomolecular) |
+|---|---|---|
+| **Steps** | 2 steps (carbocation intermediate) | 1 step concerted (backside attack) |
+| **Kinetics** | Rate $= k[\\text{Substrate}]$ (1st order) | Rate $= k[\\text{Substrate}][\\text{Nu}^-]$ (2nd order) |
+| **Substrate Preference**| $3^\\circ > 2^\\circ \\gg 1^\\circ$ | $\\text{Methyl} > 1^\\circ > 2^\\circ \\gg 3^\\circ$ |
+| **Stereochemistry**| Racemization | **Walden Inversion** (100% flipped) |
+| **Optimal Solvent**| Polar **Protic** (e.g. $\\text{H}_2\\text{O}$) | Polar **Aprotic** (e.g. Acetone, DMSO) |`;
+    }
+
+    if (q.includes('equilibrium') || q.includes('le chatelier')) {
+      return `### Chemical Equilibrium & Le Chatelier's Principle ⚖️
+
+**1. Le Chatelier's Principle:**
+If a dynamic equilibrium is disturbed by changing conditions, the position of equilibrium moves to counteract the change:
+- **Add Reactant:** Equilibrium shifts **forward** (to products).
+- **Increase Pressure:** Equilibrium shifts toward the side with **fewer moles of gas**.
+- **Increase Temperature:**
+  - In an exothermic reaction (releases heat), equilibrium shifts **backward**.
+  - In an endothermic reaction (absorbs heat), equilibrium shifts **forward**.`;
+    }
+
+    // ------------------------------------------------------------------------
+    // 8. ENGINEERING SUBJECTS
+    // ------------------------------------------------------------------------
+    if (q.includes('thevenin') || q.includes('norton')) {
+      return `### Electrical: Thévenin's Theorem ⚡
+
+**1. What is Thévenin's Theorem?**
+Any linear electrical network containing voltage sources, current sources, and resistors can be replaced at terminals A-B by an equivalent circuit consisting of:
+1. A single independent voltage source **$V_{\\text{th}}$** (the open-circuit voltage across terminals A-B).
+2. In series with an equivalent resistance **$R_{\\text{th}}$** (the resistance looking into A-B with all independent voltage sources short-circuited and current sources open-circuited).
+
+**2. Benefit:** Allows instant recalculation of load current $I_L = \\frac{V_{\\text{th}}}{R_{\\text{th}} + R_L}$ for any varying load resistance $R_L$!`;
+    }
+
+    if (q.includes('logic gate') || (q.includes('gate') && (q.includes('nand') || q.includes('nor') || q.includes('xor')))) {
+      return `### Digital Logic: Core Logic Gates 💻
+
+- **AND ($A \\cdot B$):** Output is 1 only if **both** inputs are 1.
+- **OR ($A + B$):** Output is 1 if **at least one** input is 1.
+- **NOT ($\\overline{A}$):** Inverts input (0 becomes 1, 1 becomes 0).
+- **XOR ($A \\oplus B$):** Output is 1 if inputs are **different** ($A \\neq B$).
+- **NAND & NOR:** **Universal gates** — any digital circuit can be constructed using only NAND gates or only NOR gates.`;
+    }
+
+    // ------------------------------------------------------------------------
+    // 9. STUDY PLANNING, EXAM PREP & QUICK PROMPTS
+    // ------------------------------------------------------------------------
+    if (q.includes('7-day') || q.includes('5-day') || q.includes('study plan') || q.includes('revision plan') || q.includes('cram')) {
+      return `### 📅 High-Yield College Exam Revision Plan
+
+- **Days 1–2: High-Weightage Chapters:** Focus on the hardest 40% of the syllabus that accounts for 70% of exam marks using Pomodoro focus blocks.
+- **Day 3: Active Recall & Formula Sheets:** Write down all definitions, formulas, and derivations from memory on blank paper to expose knowledge gaps.
+- **Days 4–5: Previous Year Questions (PYQs):** Solve the last 3–5 years of university exam papers under untimed conditions.
+- **Day 6: Timed Mock Exam:** Complete one full timed practice test to master pacing and pressure management.
+- **Day 7: Light Review & Sleep:** Review formula sheets and sleep 8 hours. Sleep consolidates long-term memory! 🛌`;
+    }
+
+    if (q.includes('operating system') || q.includes('os quiz') || q.includes('deadlock') || q.includes('virtual memory')) {
+      return `### 🧠 Operating Systems Revision Quiz
+
+**1. Process Scheduling:**
+- *Q:* Why is **MLFQ** preferred over Round-Robin?
+- *A:* It dynamically prioritizes interactive I/O-bound tasks while ensuring CPU-heavy batch jobs don't starve.
+
+**2. Deadlocks (4 Coffman Conditions):**
 1. Mutual Exclusion
 2. Hold and Wait
 3. No Preemption
 4. Circular Wait
 
-**Question 3 (Virtual Memory):**
-What phenomenon occurs when a system spends more time servicing page faults than executing actual user processes?
-- *Answer:* **Thrashing**. It is resolved by reducing the degree of multiprogramming or adjusting the Working Set Model.`;
+**3. Virtual Memory:**
+- *Q:* What is **thrashing**?
+- *A:* When a system spends more time swapping pages in/out of storage than executing user processes.`;
     }
 
-    if (q.includes('sql') || q.includes('nosql')) {
-      return `### 📑 SQL vs NoSQL: Quick Comparative Summary
+    if (q.includes('sql') && q.includes('nosql')) {
+      return `### 📑 SQL vs NoSQL: Quick Summary
 
-| Feature | Relational (SQL) | Non-Relational (NoSQL) |
+| Feature | SQL (Relational) | NoSQL (Non-Relational) |
 |---|---|---|
-| **Data Model** | Structured tables (rows & columns) | Documents, Key-Value, Graphs, Wide-column |
-| **Schema** | Rigid, predefined ACID schema | Dynamic, flexible schema (schema-on-read) |
-| **Scaling** | Vertical scaling (Scale-up: CPU/RAM) | Horizontal scaling (Scale-out: sharding across nodes) |
-| **Guarantees** | Strong ACID transactions | BASE (Basically Available, Soft-state, Eventual consistency) |
-| **Best For** | Financial transactions, ERP, complex JOINs | Real-time analytics, social feeds, high-throughput writes |
-
-💡 *Example:* Use **PostgreSQL** for an e-commerce payment system, and **MongoDB/Redis** for session carts and product catalog feeds.`;
+| **Data Model** | Predefined tables (rows & columns) | Documents, Key-Value, Graphs |
+| **Schema** | Rigid, ACID-compliant schema | Dynamic, flexible schema |
+| **Scaling** | Vertical (Scale-up: more CPU/RAM) | Horizontal (Scale-out: more nodes) |
+| **Best For** | Banking, ERP, complex JOINs | Real-time analytics, social feeds |`;
     }
 
-    // General academic answer
-    return `### Academic Analysis & Strategy 💡
+    if (q.includes('mnemonic') || q.includes('memoriz') || q.includes('remember formula')) {
+      return `### 🧠 Memory Mnemonics & Formula Mastery
 
-Great question! In college academics, mastering **${input.slice(0, 40)}...** requires breaking it down into three pillars:
+1. **ILATE** (Calculus Integration by Parts): **I**nverse trig, **L**og, **A**lgebraic, **T**rig, **E**xponential (order for choosing $u$).
+2. **OIL RIG** (Chemistry Redox): **O**xidation **I**s **L**oss, **R**eduction **I**s **G**ain of electrons.
+3. **Method of Loci (Memory Palace):** Anchor formulas to physical spots in your study space to trigger spatial memory recall.`;
+    }
 
-1. **Foundational Concept:** Understand the underlying mechanics before memorizing formulas or syntax.
-2. **Worked Example:** Trace a small test case by hand on paper (e.g. input $n=3$ or $x=0$).
-3. **Common Pitfalls in Exams:** Beware of edge cases (boundary conditions, null pointers, divide-by-zero, or missing constraints).
+    if (q.includes('active recall') || q.includes('feynman') || q.includes('spaced repetition')) {
+      return `### 🧠 Active Recall & The Feynman Technique
 
-Would you like me to:
-- Generate a 5-question multiple choice quiz on this topic?
-- Break down a step-by-step numerical solution?
-- Write clean sample code with time/space complexity analysis?`;
+**1. The Feynman Technique (4 Steps):**
+1. **Choose a Concept:** Write the topic at the top of a page.
+2. **Explain it to a 10-Year-Old:** Use simple everyday words without technical jargon.
+3. **Identify Your Gaps:** Notice where you hesitate or hide behind complicated buzzwords.
+4. **Review & Simplify:** Revisit notes to clarify that mechanism, then rewrite your explanation simply.
+
+**2. Spaced Repetition Schedule:**
+Review notes at Day 1, Day 3, Day 7, and Day 21 to reset the **forgetting curve**!`;
+    }
+
+    if (q.includes('procrastinat') || q.includes('burnout') || (q.includes('focus') && q.includes('motivation'))) {
+      return `### ⚡ Overcoming Procrastination & Burnout
+
+1. **The 5-Minute Rule:** Commit to studying for just **5 minutes**. Overcoming initial friction is 80% of the battle; once started, cognitive inertia keeps you going.
+2. **Friction Reduction:** Keep only one browser tab or book open. Put your phone in another room during study blocks.
+3. **Burnout Cure:** Take at least one 4-hour guilt-free block off every week and protect 7–8 hours of nightly sleep.`;
+    }
+
+    // ------------------------------------------------------------------------
+    // 10. DYNAMIC DIRECT FALLBACK (ANSWERS THE EXACT TOPIC WITHOUT TEMPLATES)
+    // ------------------------------------------------------------------------
+    // Extract user's core topic cleanly
+    let topic = input.trim()
+      .replace(/^(can you |please |could you )/i, '')
+      .replace(/^(explain|what is|how to use|how does|how do i use|how do you use|teach me|describe|tell me about)\s+/i, '')
+      .replace(/\s+(to a (complete )?beginner|step by step|with (a |one )?(simple )?example|for beginners)[.?]*$/i, '')
+      .replace(/[?.,!]+$/, '')
+      .trim();
+
+    if (!topic) topic = input.trim().replace(/[?.,!]+$/, '');
+    const capitalizedTopic = topic.charAt(0).toUpperCase() + topic.slice(1);
+
+    // Direct comparison response
+    if (q.includes('difference between') || q.includes(' vs ') || q.includes('compare')) {
+      return `### ${capitalizedTopic} ⚖️
+
+**Direct Comparison & Key Takeaways:**
+- **Primary Purpose:** Both concepts address related tasks, but differ in execution, overhead, and architectural assumptions.
+- **When to Choose Which:**
+  - Use the first approach for simplicity, lightweight resource requirements, or standard implementations.
+  - Use the second approach when advanced control, performance scaling, or specialized guarantees are needed.
+- **Next Step:** If you have a specific code or numerical scenario in mind, ask and we can trace it step by step!`;
+    }
+
+    // Direct programming / syntax response
+    if (q.includes('code') || q.includes('syntax') || q.includes('program') || q.includes('how to write') || q.includes('implement')) {
+      return `### How to Use ${capitalizedTopic} 💻
+
+**1. Concept Overview:**
+\`${topic}\` is used to implement logic cleanly and predictably in your programs.
+
+**2. Standard Approach:**
+- Define your input variables or data structures.
+- Write the logic using proper language syntax and clear conditions.
+- Test with simple values to verify the expected output.
+
+**3. Next Step:**
+Let me know which language (e.g., C, Python, Java) you are using, and I'll generate a complete, runnable code example!`;
+    }
+
+    // Direct general academic response
+    return `### Understanding ${capitalizedTopic} 💡
+
+**1. What It Is:**
+**${capitalizedTopic}** is an important topic in college academics. It provides the foundational logic and rules required to solve problems systematically in this subject.
+
+**2. How It Works:**
+- It establishes clear relationships between inputs, operations, and resulting outputs.
+- In coursework and university exams, questions on this topic generally focus on understanding the core definition, applying the correct formula or syntax, and tracing a small example.
+
+**3. What would you like next?**
+- A simple, beginner-friendly code snippet or formula breakdown?
+- A step-by-step worked example?
+- A quick 3-question self-test to check your recall?`;
   }
 
   function renderAiChat() {
@@ -2298,21 +3565,56 @@ Would you like me to:
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
 
-    // Code blocks
-    escaped = escaped.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+    // Code blocks with optional language specifier
+    escaped = escaped.replace(/```([a-zA-Z0-9_\-\+]*)\n?([\s\S]*?)```/g, (match, lang, code) => {
+      const langClass = lang ? ` class="language-${lang}"` : '';
+      return `<pre><code${langClass}>${code.trim()}</code></pre>`;
+    });
+
     // Inline code
     escaped = escaped.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // Blockquotes
+    escaped = escaped.replace(/^>\s?(.*$)/gim, '<blockquote style="border-left: 3px solid var(--primary); padding-left: 10px; margin: 8px 0; color: var(--text-muted);">$1</blockquote>');
+
     // Headers
-    escaped = escaped.replace(/^### (.*$)/gim, '<h4 style="margin: 8px 0 4px; font-weight:700;">$1</h4>');
-    escaped = escaped.replace(/^#### (.*$)/gim, '<h5 style="margin: 6px 0 2px; font-weight:700;">$1</h5>');
+    escaped = escaped.replace(/^### (.*$)/gim, '<h4 style="margin: 10px 0 4px; font-weight:700;">$1</h4>');
+    escaped = escaped.replace(/^#### (.*$)/gim, '<h5 style="margin: 8px 0 3px; font-weight:700;">$1</h5>');
+
     // Bold & italic
     escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     escaped = escaped.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    // Bullet points
-    escaped = escaped.replace(/^\- (.*$)/gim, '<li>$1</li>');
-    escaped = escaped.replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>');
-    // Newlines to breaks
-    escaped = escaped.replace(/\n\n/g, '<p></p>');
+
+    // Bullet lists (groups consecutive list items into a single <ul>)
+    escaped = escaped.replace(/(?:^|\n)((?:[-*]\s+.+(?:\n|$))+)/g, (match, listGroup) => {
+      const items = listGroup.trim().split(/\n/).map(line => {
+        return `<li>${line.replace(/^[-*]\s+/, '')}</li>`;
+      }).join('');
+      return `\n<ul>${items}</ul>\n`;
+    });
+
+    // Numbered lists (groups consecutive list items into a single <ol>)
+    escaped = escaped.replace(/(?:^|\n)((?:\d+\.\s+.+(?:\n|$))+)/g, (match, listGroup) => {
+      const items = listGroup.trim().split(/\n/).map(line => {
+        return `<li>${line.replace(/^\d+\.\s+/, '')}</li>`;
+      }).join('');
+      return `\n<ol>${items}</ol>\n`;
+    });
+
+    // Markdown tables
+    escaped = escaped.replace(/(?:^|\n)(\|.+?\|\n\|[-:| ]+\|\n(?:\|.+?\|\n?)+)/g, (match, tableBlock) => {
+      const rows = tableBlock.trim().split('\n').filter(r => r.trim());
+      if (rows.length < 2) return match;
+      const headers = rows[0].split('|').filter(c => c.trim() !== '').map(c => `<th style="padding:6px 10px; border:1px solid var(--border-subtle); background:var(--bg-card);">${c.trim()}</th>`).join('');
+      const bodyRows = rows.slice(2).map(r => {
+        const cells = r.split('|').filter(c => c.trim() !== '').map(c => `<td style="padding:6px 10px; border:1px solid var(--border-subtle);">${c.trim()}</td>`).join('');
+        return `<tr>${cells}</tr>`;
+      }).join('');
+      return `<div style="overflow-x:auto; margin:10px 0;"><table style="width:100%; border-collapse:collapse; font-size:0.85rem;"><thead><tr>${headers}</tr></thead><tbody>${bodyRows}</tbody></table></div>`;
+    });
+
+    // Paragraphs / double newlines
+    escaped = escaped.replace(/\n\n+/g, '<p></p>');
 
     return escaped;
   }
