@@ -9,7 +9,7 @@
   // ==========================================================================
   // 1. CONSTANTS & INITIAL DATA STORE
   // ==========================================================================
-  const STORAGE_KEY = 'study_buddy_data_v2';
+  const STORAGE_KEY = 'study_buddy_data_v3';
   const THEME_KEY = 'study_buddy_theme';
 
   // Helpers to get today's and past dates in YYYY-MM-DD
@@ -19,113 +19,14 @@
     return d.toISOString().split('T')[0];
   }
 
-  // Realistic sample starter data for college students
+  // Default starter data for fresh users
   function getDefaultData() {
-    const today = getIsoDate(0);
-    const yesterday = getIsoDate(-1);
-    const twoDaysAgo = getIsoDate(-2);
-    const threeDaysAgo = getIsoDate(-3);
-    const fourDaysAgo = getIsoDate(-4);
-
     return {
-      subjects: [
-        {
-          id: 'sub-cs201',
-          name: 'Data Structures & Algorithms',
-          code: 'CS201',
-          targetHours: 6,
-          color: '#6366f1',
-          instructor: 'Dr. Turing (Hall B)',
-          studySeconds: 21600 // 6 hours
-        },
-        {
-          id: 'sub-math102',
-          name: 'Linear Algebra & Matrix Theory',
-          code: 'MATH102',
-          targetHours: 5,
-          color: '#3b82f6',
-          instructor: 'Prof. Gauss (Room 302)',
-          studySeconds: 16200 // 4.5 hours
-        },
-        {
-          id: 'sub-cs304',
-          name: 'Operating Systems',
-          code: 'CS304',
-          targetHours: 5,
-          color: '#10b981',
-          instructor: 'Dr. Ritchie (Lab 4)',
-          studySeconds: 14400 // 4 hours
-        },
-        {
-          id: 'sub-econ101',
-          name: 'Principles of Microeconomics',
-          code: 'ECON101',
-          targetHours: 4,
-          color: '#f59e0b',
-          instructor: 'Prof. Smith (Auditorium 1)',
-          studySeconds: 10800 // 3 hours
-        }
-      ],
-      tasks: [
-        {
-          id: 'task-1',
-          title: 'Implement Binary Search Tree traversal & balancing lab',
-          subjectId: 'sub-cs201',
-          dueDate: getIsoDate(1),
-          priority: 'high',
-          category: 'Assignment',
-          status: 'in-progress',
-          notes: 'Write clean C++/Java code for AVL rotations and inorder/postorder print.'
-        },
-        {
-          id: 'task-2',
-          title: 'Eigenvalues and Diagonalization practice problem set',
-          subjectId: 'sub-math102',
-          dueDate: getIsoDate(3),
-          priority: 'medium',
-          category: 'Exam Prep',
-          status: 'todo',
-          notes: 'Solve problems 12 through 28 in Chapter 5. Review characteristic polynomial.'
-        },
-        {
-          id: 'task-3',
-          title: 'Virtual Memory & Paging implementation writeup',
-          subjectId: 'sub-cs304',
-          dueDate: getIsoDate(4),
-          priority: 'high',
-          category: 'Lab Work',
-          status: 'todo',
-          notes: 'Prepare flowchart of TLB miss and page fault handler routines.'
-        },
-        {
-          id: 'task-4',
-          title: 'Consumer Surplus and Price Elasticity study case',
-          subjectId: 'sub-econ101',
-          dueDate: getIsoDate(6),
-          priority: 'low',
-          category: 'Reading',
-          status: 'todo',
-          notes: 'Read pages 88-112 of Krugman Microeconomics.'
-        },
-        {
-          id: 'task-5',
-          title: 'Review CLRS Chapter 6 (Heapsort & Priority Queues)',
-          subjectId: 'sub-cs201',
-          dueDate: yesterday,
-          priority: 'medium',
-          category: 'Review',
-          status: 'completed',
-          notes: 'Finished all exercise questions and max-heapify analysis.'
-        }
-      ],
-      todos: [
-        { id: 'todo-1', text: 'Review QuickSort 3-way partition logic', completed: true },
-        { id: 'todo-2', text: 'Solve 5 Linear Algebra matrix inverse problems', completed: true },
-        { id: 'todo-3', text: 'Read OS lecture 12 slides on Deadlock Prevention', completed: true },
-        { id: 'todo-4', text: 'Draft microeconomics essay outline on market equilibrium', completed: false }
-      ],
+      subjects: [],
+      tasks: [],
+      todos: [],
       timer: {
-        mode: 'pomodoro', // 'pomodoro' | 'shortBreak' | 'longBreak' | 'stopwatch'
+        mode: 'pomodoro',
         durations: {
           pomodoro: 25 * 60,
           shortBreak: 5 * 60,
@@ -134,120 +35,19 @@
         timeRemaining: 25 * 60,
         stopwatchSeconds: 0,
         isRunning: false,
-        activeSubjectId: 'sub-cs201',
+        activeSubjectId: null,
         soundEnabled: true,
-        completedCyclesToday: 3,
-        todayStudySeconds: 9900, // 2h 45m
-        recentSessions: [
-          { subjectId: 'sub-cs201', subjectName: 'Data Structures', durationMin: 50, date: today, timeStr: '10:30 AM' },
-          { subjectId: 'sub-math102', subjectName: 'Linear Algebra', durationMin: 45, date: today, timeStr: '11:45 AM' },
-          { subjectId: 'sub-cs304', subjectName: 'Operating Systems', durationMin: 45, date: today, timeStr: '02:15 PM' },
-          { subjectId: 'sub-econ101', subjectName: 'Microeconomics', durationMin: 25, date: yesterday, timeStr: '04:00 PM' }
-        ]
+        completedCyclesToday: 0,
+        todayStudySeconds: 0,
+        recentSessions: []
       },
-      mockTests: [
-        {
-          id: 'mock-1',
-          title: 'CS201 Midterm Mock Exam 2024',
-          subjectId: 'sub-cs201',
-          type: 'Full Mock',
-          score: 86,
-          maxScore: 100,
-          timeMinutes: 85,
-          date: today,
-          weakTopics: 'Lost marks on amortized analysis and AVL delete cases.'
-        },
-        {
-          id: 'mock-2',
-          title: 'MATH102 Fall 2023 PYQ Paper',
-          subjectId: 'sub-math102',
-          type: 'PYQ',
-          score: 92,
-          maxScore: 100,
-          timeMinutes: 80,
-          date: yesterday,
-          weakTopics: 'Gram-Schmidt orthonormalization arithmetic error on Q4.'
-        },
-        {
-          id: 'mock-3',
-          title: 'CS304 Process Scheduling Test',
-          subjectId: 'sub-cs304',
-          type: 'Sectional',
-          score: 74,
-          maxScore: 100,
-          timeMinutes: 60,
-          date: twoDaysAgo,
-          weakTopics: 'Multilevel feedback queue priority aging calculation.'
-        },
-        {
-          id: 'mock-4',
-          title: 'GATE 2022 CS Data Structures PYQ Set',
-          subjectId: 'sub-cs201',
-          type: 'PYQ',
-          score: 42,
-          maxScore: 50,
-          timeMinutes: 45,
-          date: threeDaysAgo,
-          weakTopics: 'Quadratic probing hash collision lookup complexity.'
-        },
-        {
-          id: 'mock-5',
-          title: 'ECON101 Unit 2 Revision Test',
-          subjectId: 'sub-econ101',
-          type: 'Sectional',
-          score: 47,
-          maxScore: 50,
-          timeMinutes: 40,
-          date: fourDaysAgo,
-          weakTopics: 'Consumer surplus tax deadweight loss graphical depiction.'
-        }
-      ],
-      reminders: [
-        {
-          id: 'rem-1',
-          title: 'Evening DSA LeetCode & Lab coding session',
-          time: '19:00',
-          subjectId: 'sub-cs201',
-          frequency: 'daily',
-          active: true
-        },
-        {
-          id: 'rem-2',
-          title: 'Linear Algebra matrix homework review',
-          time: '16:30',
-          subjectId: 'sub-math102',
-          frequency: 'weekdays',
-          active: true
-        },
-        {
-          id: 'rem-3',
-          title: 'Operating Systems lecture notes recap',
-          time: '21:00',
-          subjectId: 'sub-cs304',
-          frequency: 'weekdays',
-          active: false
-        }
-      ],
+      mockTests: [],
+      reminders: [],
       streak: {
-        currentStreak: 5,
-        longestStreak: 12,
-        lastActiveDate: today,
-        dailyHistory: {
-          [getIsoDate(-13)]: 3600,
-          [getIsoDate(-12)]: 5400,
-          [getIsoDate(-11)]: 7200,
-          [getIsoDate(-10)]: 0,
-          [getIsoDate(-9)]: 4800,
-          [getIsoDate(-8)]: 9000,
-          [getIsoDate(-7)]: 7200,
-          [getIsoDate(-6)]: 10800,
-          [getIsoDate(-5)]: 5400,
-          [fourDaysAgo]: 7200,
-          [threeDaysAgo]: 8400,
-          [twoDaysAgo]: 6300,
-          [yesterday]: 9000,
-          [today]: 9900
-        }
+        currentStreak: 0,
+        longestStreak: 0,
+        lastActiveDate: null,
+        dailyHistory: {}
       },
       chatHistory: [
         {
@@ -280,7 +80,22 @@ Pick a quick prompt above or ask any question!`
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        return { ...getDefaultData(), ...parsed };
+        return {
+          ...getDefaultData(),
+          ...parsed,
+          timer: {
+            ...getDefaultData().timer,
+            ...(parsed.timer || {})
+          },
+          streak: {
+            ...getDefaultData().streak,
+            ...(parsed.streak || {})
+          },
+          settings: {
+            ...getDefaultData().settings,
+            ...(parsed.settings || {})
+          }
+        };
       }
     } catch (e) {
       console.error('Error loading data from localStorage, falling back to defaults:', e);
@@ -299,6 +114,10 @@ Pick a quick prompt above or ask any question!`
 
   // Check & update streak consistency
   function evaluateStreak() {
+    if (!state.streak.lastActiveDate) {
+      state.streak.currentStreak = 0;
+      return;
+    }
     const today = getIsoDate(0);
     const yesterday = getIsoDate(-1);
     const lastActive = state.streak.lastActiveDate;
@@ -311,7 +130,7 @@ Pick a quick prompt above or ask any question!`
       // streak maintained
     } else {
       // missed more than 1 day
-      state.streak.currentStreak = 1;
+      state.streak.currentStreak = 0;
     }
   }
 
@@ -2491,9 +2310,13 @@ Would you like me to:
           state.todos = [];
           state.mockTests = [];
           state.reminders = [];
-          state.timer.recentSessions = [];
-          state.streak.currentStreak = 1;
+          state.streak.currentStreak = 0;
+          state.streak.longestStreak = 0;
           state.streak.dailyHistory = {};
+          state.streak.lastActiveDate = null;
+          state.timer.todayStudySeconds = 0;
+          state.timer.completedCyclesToday = 0;
+          state.timer.recentSessions = [];
           saveState();
           window.location.reload();
         }
